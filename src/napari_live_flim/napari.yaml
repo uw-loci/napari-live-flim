@@ -1,0 +1,10 @@
+name: napari-live-flim
+display_name: Napari Live Flim
+contributions:
+  commands:
+    - id: napari-live-flim.open
+      title: FLIM Viewer
+      python_name: napari_live_flim._widget:FlimViewer
+  widgets:
+    - command: napari-live-flim.open
+      display_name: FLIM Viewer
