@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
+from superqt import ensure_main_thread
 from napari import Viewer
 from PyQt5 import QtGui
 from qtpy.QtCore import QObject, Signal
@@ -71,15 +72,10 @@ class FlimViewer(QWidget):
         self.snap_widget.snap_button.clicked.connect(self.series_viewer.snap)
         self.layout.addRow(self.snap_widget.group)
 
-        flim_receiver.new_series.connect(lambda series_receiver : print(series_receiver.shape))
-        flim_receiver.new_series.connect(lambda : self.port_widget.disable_editing())
-        flim_receiver.new_series.connect(self.series_viewer.setup_sequence_viewer)
-        flim_receiver.new_series.connect(self.options_widget.flim_params_widget.initialize_fit_range)
-        flim_receiver.end_series.connect(lambda : print("end"))
-        flim_receiver.end_series.connect(lambda : self.port_widget.enable_editing())
+        flim_receiver.new_series.connect(self.new_series)
+        flim_receiver.new_element.connect(self.new_element)
+        flim_receiver.end_series.connect(self.end_series)
         self.destroyed.connect(lambda : flim_receiver.stop_receiving())
-        
-        flim_receiver.new_element.connect(self.series_viewer.receive_and_update)
         
         @self.lifetime_viewer.dims.events.current_step.connect
         def lifetime_slider_changed(event):
@@ -87,6 +83,20 @@ class FlimViewer(QWidget):
             #self.update_selections()
             pass
     
+    @ensure_main_thread
+    def new_series(self, series_metadata : SeriesMetadata):
+        self.port_widget.disable_editing()
+        self.options_widget.flim_params_widget.initialize_fit_range(series_metadata)
+        self.series_viewer.setup_sequence_viewer(series_metadata)
+    
+    @ensure_main_thread
+    def new_element(self, element_data : ElementData):
+        self.series_viewer.receive_and_update(element_data)
+
+    @ensure_main_thread
+    def end_series(self):
+        self.port_widget.enable_editing()
+
     def closeEvent(self, a0: QtGui.QCloseEvent) -> None:
         super().closeEvent(a0)
         print(type(a0))
