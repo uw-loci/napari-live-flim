@@ -311,19 +311,19 @@ class DisplayFiltersWidget(QObject):
 
         self.min_intensity = QSpinBox()
         self.min_intensity.setRange(0, MAX_VALUE)
-        self.min_intensity.setValue(0)
+        self.min_intensity.setValue(DEFUALT_MIN_INTENSITY)
         self.min_intensity.valueChanged.connect(changed_callback)
         self.layout.addRow("Min Intensity", self.min_intensity)
 
         self.max_chisq = QDoubleSpinBox()
         self.max_chisq.setRange(0, MAX_VALUE)
-        self.max_chisq.setValue(MAX_VALUE)
+        self.max_chisq.setValue(DEFUALT_MAX_CHISQ)
         self.max_chisq.valueChanged.connect(changed_callback)
         self.layout.addRow("Max χ2", self.max_chisq)
 
         self.max_tau = QDoubleSpinBox()
         self.max_tau.setRange(0, MAX_VALUE)
-        self.max_tau.setValue(MAX_VALUE)
+        self.max_tau.setValue(DEFAULT_MAX_TAU)
         self.max_tau.setSingleStep(0.1)
         self.max_tau.valueChanged.connect(changed_callback)
         self.layout.addRow("Max Lifetime", self.max_tau)
