@@ -1,4 +1,3 @@
-import copy
 import time
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -11,7 +10,6 @@ import numpy as np
 
 from scipy.spatial import KDTree
 from superqt import ensure_main_thread
-from vispy.scene.visuals import Text
 
 from ._widget import executor
 
@@ -170,14 +168,15 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     tau = rld.tau
     
     intensity = intensity_future.result()
-    tau[intensity < filters.min_intensity] = np.nan
-    tau[rld.chisq > filters.max_chisq] = np.nan
+    tau[intensity < filters.min_intensity] = 0
+    maxi = np.nanmax(intensity)
+    intensity = intensity * (1 / maxi) if maxi > 0 else np.zeros_like(intensity)
+    tau[rld.chisq > filters.max_chisq] = 0
     # negative lifetimes are not valid
-    tau[tau<0] = np.nan 
-    tau[tau > filters.max_tau] = np.nan
-
-    intensity = intensity / intensity.max()
-    tau *= (COLOR_DEPTH)/np.nanmax(tau)
+    tau[tau<0] = 0
+    tau[tau > filters.max_tau] = 0
+    maxt = np.nanmax(tau)
+    tau = tau * (COLOR_DEPTH / maxt) if maxt > 0 else np.zeros_like(tau)
     np.nan_to_num(tau, copy=False)
     tau = tau.astype(int)
     tau[tau >= COLOR_DEPTH] = COLOR_DEPTH - 1 # this value is used to index into the colormap
@@ -188,7 +187,7 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     return intensity_scaled_tau
 
 def compute_intensity(photon_count : np.ndarray) -> np.ndarray:
-    return photon_count.sum(axis=-1)
+    return np.nansum(photon_count, axis=-1)
 
 def compute_phasor_image(phasor : Future[np.ndarray]):
     return phasor.result().reshape(-1,phasor.result().shape[-1])
@@ -271,10 +270,7 @@ class SequenceViewer:
         self.swap_lifetime_proxy_array()
 
     def swap_lifetime_proxy_array(self):
-        self.lifetime_image.data = self.get_new_lifetime_image_proxy()
-
-    def get_new_lifetime_image_proxy(self):
-        return LifetimeImageProxy(self)
+        self.lifetime_image.data = LifetimeImageProxy(self)
 
     def get_tasks_list(self):
         return [snapshot.tasks for snapshot in self.snapshots]
@@ -300,5 +296,5 @@ class SequenceViewer:
             if self.series_viewer.params.delta_snapshots and step != 0:
                 return self.snapshots[step].photon_count - self.snapshots[step - 1].photon_count
             else:
-                return copy.copy(self.snapshots[step].photon_count)
+                return self.snapshots[step].photon_count
         return np.broadcast_to(np.array([np.nan]), self.shape)

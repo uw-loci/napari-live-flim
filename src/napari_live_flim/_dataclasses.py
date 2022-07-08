@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from numpy import ndarray
+import numpy as np
 from flimlib import TripleIntegralResult, MarquardtResult
 
 @dataclass(frozen=True)
@@ -18,21 +18,25 @@ class FlimParams():
 
 @dataclass(frozen=True)
 class SelectionResult:
-    histogram : ndarray
-    points : ndarray
+    histogram : np.ndarray
+    points : np.ndarray
     rld : TripleIntegralResult
     lm : MarquardtResult
 
 @dataclass(frozen=True)
 class MaskResult:
-    extrema : ndarray
-    mask : ndarray
+    extrema : np.ndarray
+    mask : np.ndarray
 
-@dataclass(frozen=True)
+@dataclass(init=False) # cannot be frozen because overridden __init__
 class ElementData:
     series_no : int
     seqno : int
-    frame : ndarray
+    frame : np.ndarray
+    def __init__(self, series_no : int, seqno : int, frame : np.ndarray):
+        self.series_no = series_no
+        self.seqno = seqno
+        self.frame = np.array(frame, dtype=np.float32, copy=True)
 
 @dataclass(frozen=True)
 class SeriesMetadata:

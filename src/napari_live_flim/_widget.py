@@ -40,28 +40,27 @@ class FlimViewer(QWidget):
         self.phasor_viewer = self.phasor_viewer = Viewer(title="Phasor Viewer")
         self.phasor_viewer.window.qt_viewer.dockLayerList.setVisible(False)
         self.phasor_viewer.window.qt_viewer.dockLayerControls.setVisible(False)
-
         #self.destroyed.connect(self.phasor_viewer.close)
-        
-        self.series_viewer = SeriesViewer(
-            self.lifetime_viewer, 
-            self.phasor_viewer, 
-        )
 
         self.layout = QFormLayout()
         self.setLayout(self.layout)
+        
+        self.options_widget = OptionsWidget()
+        self.options_widget.flim_params_widget.changed.connect(lambda p : self.series_viewer.set_params(p))
+        self.options_widget.display_filters_widget.changed.connect(lambda f : self.series_viewer.set_filters(f))
+        self.layout.addRow(self.options_widget.group)
+
+        self.series_viewer = SeriesViewer(
+            self.lifetime_viewer,
+            self.phasor_viewer,
+            self.options_widget.flim_params_widget.values(),
+            self.options_widget.display_filters_widget.values(),
+        )
 
         self.port_widget = PortSelection()
         self.port_widget.port_selected.connect(flim_receiver.start_receiving)
         self.port_widget.port_removed.connect(flim_receiver.stop_receiving)
         self.layout.addRow(self.port_widget.group)
-
-        self.options_widget = OptionsWidget()
-        self.options_widget.flim_params_widget.changed.connect(lambda p : self.series_viewer.set_params(p))
-        self.options_widget.display_filters_widget.changed.connect(lambda f : self.series_viewer.set_filters(f))
-        self.series_viewer.set_params(self.options_widget.flim_params_widget.values())
-        self.series_viewer.set_filters(self.options_widget.display_filters_widget.values())
-        self.layout.addRow(self.options_widget.group)
 
         self.selection_widget = SelectionWidget()
         self.selection_widget.new_lifetime_selection_button.clicked.connect(self.series_viewer.create_lifetime_select_layer)
@@ -77,11 +76,6 @@ class FlimViewer(QWidget):
         flim_receiver.end_series.connect(self.end_series)
         self.destroyed.connect(lambda : flim_receiver.stop_receiving())
         
-        @self.lifetime_viewer.dims.events.current_step.connect
-        def lifetime_slider_changed(event):
-            #self.update_displays()
-            #self.update_selections()
-            pass
     
     @ensure_main_thread
     def new_series(self, series_metadata : SeriesMetadata):

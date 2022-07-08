@@ -21,50 +21,37 @@ from .gather_futures import gather_futures
 from ._dataclasses import *
 from ._sequence_viewer import SequenceViewer, ComputeTask
 
-COLOR_DICT = {  "red":"#FF0000",
-                "green":"#00FF00",
-                "blue":"#0000FF",
-                "cyan":"#00FFFF",
-                "magenta":"#FF00FF",
-                "yellow":"#FFFF00",
-            }
-
-def color_gen():
-    while True:
-        for i in COLOR_DICT.keys():
-            yield COLOR_DICT[i]
-
 class SeriesViewer():
-    def __init__(self, lifetime_viewer : Viewer, phasor_viewer : Viewer):
-        # user parameters
-        self.params = None
-        self.filters = None
+    def __init__(self, lifetime_viewer : Viewer, phasor_viewer : Viewer, params : FlimParams, filters : DisplayFilters):
+        self.params = params
+        self.filters = filters
 
-        # class members
         self.lifetime_viewer = lifetime_viewer
-        self.phasor_viewer = phasor_viewer
-
-        autoscale_viewer(self.phasor_viewer, (PHASOR_SCALE, PHASOR_SCALE))
-
         self.exposed_lifetime_image = None
         self.live_sequence_viewer = None
         self.lifetime_viewer.layers.events.connect(self.validate_exposed_lifetime_image)
+        self.reset_current_step()
+        self.lifetime_viewer.dims.events.current_step.connect(self.update_displays)
 
+        self.phasor_viewer = phasor_viewer
+        autoscale_viewer(self.phasor_viewer, (PHASOR_SCALE, PHASOR_SCALE))
         #add the phasor circle
         phasor_circle = np.asarray([[PHASOR_SCALE, 0.5 * PHASOR_SCALE],[0.5 * PHASOR_SCALE,0.5 * PHASOR_SCALE]])
         x_axis_line = np.asarray([[PHASOR_SCALE,0],[PHASOR_SCALE,PHASOR_SCALE]])
         phasor_shapes_layer = self.phasor_viewer.add_shapes([phasor_circle, x_axis_line], shape_type=["ellipse","line"], face_color="",)
         phasor_shapes_layer.editable = False
-        
-        self.colors = color_gen()
-
-        #create dummy image layers
-        self.phasor_image = self.phasor_viewer.add_points(EMPTY_PHASOR_IMAGE, name="Phasor", edge_width=0, size=3)
+        # empty phasor data
+        self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3)
         self.phasor_image.editable = False
         
+        # color generator used for color coordinated selections
+        def color_gen():
+            while True:
+                for i in COLOR_DICT.keys():
+                    yield COLOR_DICT[i]
+        self.colors = color_gen()
+        
         self.create_lifetime_select_layer()
-
-        self.reset_current_step()
 
     def get_lifetime_layers(self, include_invisible=True) -> List[Layer]:
         layer_list = self.lifetime_viewer.layers
@@ -84,12 +71,10 @@ class SeriesViewer():
                 if self.get_exposed_sequence_viewer() is not get_sequence_viewer(layers[-1]):
                     self.exposed_lifetime_image = layers[-1]
                     self.update_displays()
-                    print("TODO should update displays")
             else:
                 if self.exposed_lifetime_image is not None:
                     self.exposed_lifetime_image = None
                     self.update_displays()
-                    print("TODO should update displays since there is none visible")
     
     def set_params(self, params : FlimParams):
         self.params = params
@@ -118,7 +103,10 @@ class SeriesViewer():
             if tasks is not None and tasks.all_done():
                 print("tasks all done. can update displays")
                 set_points(self.phasor_image, tasks.phasor_image.result(timeout=0))
-                self.phasor_image.face_color = tasks.phasor_face_color.result(timeout=0)
+                try:
+                    self.phasor_image.face_color = tasks.phasor_face_color.result(timeout=0)
+                except RuntimeError:
+                    print(tasks.phasor_face_color.result(timeout=0))
                 self.phasor_image.selected_data = {}
         else:
             set_points(self.phasor_image, None)
@@ -145,8 +133,6 @@ class SeriesViewer():
         image = self.lifetime_viewer.add_image(EMPTY_RGB_IMAGE, rgb=True, name=name)
         self.lifetime_viewer.layers.selection = sel
         self.lifetime_viewer.layers.move(len(self.lifetime_viewer.layers) - 1, len(self.get_lifetime_layers()))
-        print(self.lifetime_viewer.layers.selection)
-        print(sel)
         autoscale_viewer(self.lifetime_viewer, image_shape)
         self.live_sequence_viewer = SequenceViewer(image, shape, self)
         set_sequence_viewer(image, self.live_sequence_viewer)
@@ -213,15 +199,6 @@ class SeriesViewer():
         viewer.window.qt_viewer.dockLayerList.setVisible(True)
         viewer.window.qt_viewer.dockLayerControls.setVisible(True)
         return select_layer
-
-    """
-    def setup_options_widget(self):
-        tau_axis_size = self.get_tau_axis_size()
-        self.options_widget.fit_start.min = 0
-        self.options_widget.fit_start.max = tau_axis_size - 1
-        self.options_widget.fit_end.min = 1
-        self.options_widget.fit_end.max = tau_axis_size
-    """
 
 def compute_fits(photon_count, params : "FlimParams"):
     period = params.period
@@ -300,7 +277,7 @@ class SelectionComputeTask:
 
         series_viewer = selection_metadata.series_viewer
         sequence_viewer = series_viewer.get_exposed_sequence_viewer()
-        if sequence_viewer is not None:
+        if series_viewer.should_show_displays() and sequence_viewer is not None:
             stp = series_viewer.get_current_step()
             photon_count = sequence_viewer.get_photon_count(stp)
             tasks = sequence_viewer.get_task(stp)
@@ -346,7 +323,7 @@ class SelectionMetadata(ABC):
         self.tasks = None
     
     @abstractmethod
-    def compute_selection(self, mask_result : MaskResult, tasks : ComputeTask, photon_count : np.ndarray) -> SelectionResult:
+    def compute_selection(self, mask_result: MaskResult, tasks: ComputeTask, photon_count: np.ndarray, params : "FlimParams") -> SelectionResult:
         pass
 
     @abstractmethod
@@ -361,16 +338,19 @@ class SelectionMetadata(ABC):
         if self.tasks is None:
             self.tasks = SelectionComputeTask(self)
         if not self.tasks.is_valid() and not self.tasks.is_running():
+            print("restarting selection tasks")
             self.tasks.cancel()
             self.tasks = SelectionComputeTask(self)
         if self.tasks.all_done():
+            print("updating selection displays")
             self.decay_plot.update_with_selection(self.tasks)
             # TODO why does the following line take more than 50% of the runtime of this function?
             set_points(self.co_selection, self.tasks.selection.result(timeout=0).points)
             self.co_selection.editable = False
         
     def update(self):
-        self.tasks.invalidate()
+        if self.tasks is not None:
+            self.tasks.invalidate()
         self._update()
 
 class LifetimeSelectionMetadata(SelectionMetadata):
@@ -484,11 +464,8 @@ def select_shape_drag(layer : Shapes, event : Event):
 
 def handle_new_shape(event : Event):
     event_layer = event._sources[0]
-
     # make sure to check if each of these operations has already been done since
     # changing the data triggers this event which may cause infinite recursion
-    #if event_layer.data.shape[0] > 0 and event_layer.data.dtype != int:
-    #    event_layer.data = np.round(event_layer.data).astype(int)
     """
     # delete all shapes except for the new shape
     if len(event_layer.data) > 1 and event_layer.editable:

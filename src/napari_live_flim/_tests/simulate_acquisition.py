@@ -9,6 +9,7 @@ import logging
 from magicgui import magicgui
 from napari.qt.threading import thread_worker
 import pathlib
+import copy
 
 SAMPLES = 128
 A_IN = 10.0
