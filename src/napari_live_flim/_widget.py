@@ -44,11 +44,25 @@ class FlimViewer(QWidget):
 
         self.layout = QFormLayout()
         self.setLayout(self.layout)
-        
+
+        self.port_widget = PortSelection()
+        self.port_widget.port_selected.connect(flim_receiver.start_receiving)
+        self.port_widget.port_removed.connect(flim_receiver.stop_receiving)
+        self.layout.addRow(self.port_widget.group)
+
         self.options_widget = OptionsWidget()
-        self.options_widget.flim_params_widget.changed.connect(lambda p : self.series_viewer.set_params(p))
-        self.options_widget.display_filters_widget.changed.connect(lambda f : self.series_viewer.set_filters(f))
+        self.options_widget.flim_params_widget.changed.connect(lambda p: self.series_viewer.set_params(p))
+        self.options_widget.display_filters_widget.changed.connect(lambda f: self.series_viewer.set_filters(f))
         self.layout.addRow(self.options_widget.group)
+
+        self.selection_widget = SelectionWidget()
+        self.selection_widget.new_lifetime_selection_button.clicked.connect(lambda: self.series_viewer.create_lifetime_select_layer())
+        self.selection_widget.new_phasor_selection_button.clicked.connect(lambda: self.series_viewer.create_phasor_select_layer())
+        self.layout.addRow(self.selection_widget.group)
+
+        self.snap_widget = SnapWidget()
+        self.snap_widget.snap_button.clicked.connect(lambda: self.series_viewer.snap())
+        self.layout.addRow(self.snap_widget.group)
 
         self.series_viewer = SeriesViewer(
             self.lifetime_viewer,
@@ -56,20 +70,6 @@ class FlimViewer(QWidget):
             self.options_widget.flim_params_widget.values(),
             self.options_widget.display_filters_widget.values(),
         )
-
-        self.port_widget = PortSelection()
-        self.port_widget.port_selected.connect(flim_receiver.start_receiving)
-        self.port_widget.port_removed.connect(flim_receiver.stop_receiving)
-        self.layout.addRow(self.port_widget.group)
-
-        self.selection_widget = SelectionWidget()
-        self.selection_widget.new_lifetime_selection_button.clicked.connect(self.series_viewer.create_lifetime_select_layer)
-        self.selection_widget.new_phasor_selection_button.clicked.connect(self.series_viewer.create_phasor_select_layer)
-        self.layout.addRow(self.selection_widget.group)
-
-        self.snap_widget = SnapWidget()
-        self.snap_widget.snap_button.clicked.connect(self.series_viewer.snap)
-        self.layout.addRow(self.snap_widget.group)
 
         flim_receiver.new_series.connect(self.new_series)
         flim_receiver.new_element.connect(self.new_element)
