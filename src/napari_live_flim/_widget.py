@@ -40,7 +40,7 @@ class FlimViewer(QWidget):
         self.phasor_viewer = self.phasor_viewer = Viewer(title="Phasor Viewer")
         self.phasor_viewer.window.qt_viewer.dockLayerList.setVisible(False)
         self.phasor_viewer.window.qt_viewer.dockLayerControls.setVisible(False)
-        #self.destroyed.connect(self.phasor_viewer.close)
+        self.destroyed.connect(self.phasor_viewer.close)
 
         self.layout = QFormLayout()
         self.setLayout(self.layout)
