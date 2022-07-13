@@ -30,8 +30,11 @@ class SeriesViewer():
         self.exposed_lifetime_image = None
         self.live_sequence_viewer = None
         self.lifetime_viewer.layers.events.connect(self.validate_exposed_lifetime_image)
-        self.reset_current_step()
         self.lifetime_viewer.dims.events.current_step.connect(self.update_displays)
+        self.lifetime_viewer.dims.events.order.connect(self.update_displays)
+        self.lifetime_viewer.grid.events.enabled.connect(self.update_displays)
+        
+        self.reset_current_step()
 
         self.phasor_viewer = phasor_viewer
         autoscale_viewer(self.phasor_viewer, (PHASOR_SCALE, PHASOR_SCALE))
@@ -75,7 +78,7 @@ class SeriesViewer():
                 if self.exposed_lifetime_image is not None:
                     self.exposed_lifetime_image = None
                     self.update_displays()
-    
+
     def set_params(self, params : FlimParams):
         self.params = params
         self.update_all()
@@ -91,8 +94,11 @@ class SeriesViewer():
         self.lifetime_viewer.dims.set_current_step(0,0)
     
     def should_show_displays(self):
-        print(self.lifetime_viewer.dims.displayed)
-        return 0 not in self.lifetime_viewer.dims.displayed
+        if 0 in self.lifetime_viewer.dims.displayed:
+            return False
+        if self.lifetime_viewer.grid.enabled:
+            return False
+        return True
 
     def update_displays(self):
         sequence_viewer = self.get_exposed_sequence_viewer()

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, List
 
 import flimlib
 import numpy as np
+from napari.layers import Image
 
 from scipy.spatial import KDTree
 from superqt import ensure_main_thread
@@ -33,7 +34,7 @@ def timing(f):
     return wrap
 
 class ComputeTask:
-    def __init__(self, step, sequence_viewer : "SequenceViewer"):
+    def __init__(self, step : int, sequence_viewer : "SequenceViewer"):
         self._valid = True
         self._step = step
         self._sequence_viewer = sequence_viewer # need this to retrieve the most recent
@@ -46,9 +47,11 @@ class ComputeTask:
         self.phasor_face_color = None
         self.done = None
 
-    @ensure_main_thread # start and cancel must not happen on different threads
+    # TODO is there a way to ensure start and cancel don't happen at the same time?
+    # or is this even necessary based on where it gets called
+
     def start(self):
-        if not self.all_started(): # dont start more than once
+        if self._sequence_viewer is not None and not self.all_started(): # dont start more than once
             photon_count = self._sequence_viewer.get_photon_count(self._step)
             params = self._sequence_viewer.series_viewer.params
             filters = self._sequence_viewer.series_viewer.filters
@@ -62,7 +65,6 @@ class ComputeTask:
             self.done = gather_futures(self.intensity, self.lifetime_image, self.phasor, self.phasor_quadtree, self.phasor_image, self.phasor_face_color)
             self.done.add_done_callback(self._sequence_viewer.compute_done_callback)
 
-    @ensure_main_thread # start and cancel must not happen on different threads
     def cancel(self):
         if self.all_started(): # if looking at an old snapshot
             self.intensity.cancel()
@@ -94,22 +96,19 @@ class LifetimeImageProxy:
     An array-like object backed by the collection of lifetime_image tasks
     """
 
-    def __init__(self, sequence_viewer : "SequenceViewer", dtype=np.float32):
-        tasks_list = sequence_viewer.get_tasks_list()
+    def __init__(self, tasks_list : List[ComputeTask], image_shape, old_proxy : np.ndarray, dtype=np.float32):
         if not len(tasks_list):
-            raise ValueError # At least for now, dont allow empty
-
+            # At least for now, dont allow empty
+            raise ValueError("LifetimeImageProxy must have at least one task")
         self._arrays = tasks_list
+        self._image_shape = image_shape
+        if old_proxy.shape != image_shape:
+            raise ValueError("old proxy must have the same shape as this")
+        self._most_recent = old_proxy
         self._dtype = dtype
-        self._image_shape = sequence_viewer.get_image_shape() + (3,) # rgb
-        old_proxy = sequence_viewer.lifetime_image.data
-        if not isinstance(old_proxy, LifetimeImageProxy):
-            self.most_recent = np.zeros(self._image_shape, dtype=dtype)
-        else:
-            self.most_recent = old_proxy.most_recent
 
-    def set_tasks_list(self, tasks_list : List[ComputeTask]):
-        self._arrays = tasks_list
+    def get_old_proxy(self):
+        return self._most_recent
 
     @property
     def ndim(self):
@@ -131,7 +130,7 @@ class LifetimeImageProxy:
         if isinstance(s0, slice):
             start, stop, step = s0.indices(len(self._arrays))
             dim0 = (stop - start) // step
-            shape = (dim0,) + self._image_shape
+            shape = (dim0,) + get_sliced_shape(self._image_shape, ndslices)
             ret = np.empty(shape, dtype=self._dtype)
             j0 = 0
             for i0 in range(start, stop, step):
@@ -145,11 +144,11 @@ class LifetimeImageProxy:
         task = self._arrays[index]
         if task.all_done():
             print("Displaying done data!!!!!!!!!!")
-            self.most_recent = task.lifetime_image.result(timeout=0)
+            self._most_recent = task.lifetime_image.result(timeout=0)
         else:
             print("#############starting tasks####################")
             task.start()
-        return self.most_recent[slices]
+        return self._most_recent[slices]
 
     def __array__(self):
         print("################## NAPARI IS REQUESTING THE FULL ARRAY #####################")
@@ -157,6 +156,36 @@ class LifetimeImageProxy:
     
     def __len__(self):
         return np.prod(self.shape)
+
+def create_lifetime_image_proxy(sequence_viewer : "SequenceViewer", dtype=np.float32):
+    tasks_list = sequence_viewer.get_tasks_list()
+
+    image_shape = sequence_viewer.get_image_shape() + (3,) # rgb
+    possible_old_proxy = sequence_viewer.lifetime_image.data
+    if isinstance(possible_old_proxy, LifetimeImageProxy):
+        old_proxy = possible_old_proxy.get_old_proxy()
+    else:
+        old_proxy = np.zeros(image_shape, dtype=dtype)
+    
+    return LifetimeImageProxy(tasks_list, image_shape, old_proxy, dtype=dtype)
+
+def get_sliced_shape(shape : tuple, slices):
+    """
+    predicts the resulting shape of an array-like with 
+    the given `shape` after indexing with `slices`
+    """
+    ret = ()
+    for i, dim in enumerate(shape):
+        if i < len(slices):
+            s = slices[i]
+            if isinstance(s, slice):
+                start, stop, step = s.indices(dim)
+                ret += ((stop - start) // step,)
+            elif not np.isscalar(s):
+                raise TypeError(f"slices must contain either slice or scalar, not {type(s)}")
+        else:
+            ret += (dim,)
+    return ret
 
 # about 0.1 seconds for 256x256x256 data
 @timing
@@ -194,7 +223,7 @@ def compute_phasor_image(phasor : Future[np.ndarray]):
 
 def compute_phasor_face_color(intensity : Future[np.ndarray]):
     it = intensity.result()
-    it = it / it.max()
+    it = it / it.max() # TODO what if max is zero?
     phasor_intensity = it.ravel() * PHASOR_OPACITY_FACTOR
     color = np.broadcast_to(1.0, phasor_intensity.shape)
     return np.asarray([color,color,color,phasor_intensity]).T
@@ -219,7 +248,7 @@ class SnapshotData:
     tasks : ComputeTask
 
 class SequenceViewer:
-    def __init__(self, image, shape, series_viewer : "SeriesViewer"):
+    def __init__(self, image : Image, shape, series_viewer : "SeriesViewer"):
         self.snapshots : List[SnapshotData]= []
         self.series_viewer = series_viewer
         self.shape = shape
@@ -270,7 +299,7 @@ class SequenceViewer:
         self.swap_lifetime_proxy_array()
 
     def swap_lifetime_proxy_array(self):
-        self.lifetime_image.data = LifetimeImageProxy(self)
+        self.lifetime_image.data = create_lifetime_image_proxy(self)
 
     def get_tasks_list(self):
         return [snapshot.tasks for snapshot in self.snapshots]
