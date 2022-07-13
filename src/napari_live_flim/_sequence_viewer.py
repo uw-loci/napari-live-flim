@@ -265,8 +265,8 @@ class SequenceViewer:
     def snap(self):
         if self.has_data():
             prev = self.snapshots[-1]
-            index = len(self.snapshots)
-            self.snapshots += [SnapshotData(prev.photon_count, ComputeTask(index, self))]
+            self.snapshots += [SnapshotData(prev.photon_count, prev.tasks)]
+            self.swap_lifetime_proxy_array()
 
     def receive_and_update(self, photon_count : np.ndarray):
         # for now, we ignore all but the first channel
@@ -319,6 +319,9 @@ class SequenceViewer:
 
     def has_data(self):
         return bool(self.snapshots)
+
+    def live_index(self):
+        return len(self.snapshots) - 1
 
     def get_photon_count(self, step) -> np.ndarray:
         if -len(self.snapshots) <= step < len(self.snapshots):

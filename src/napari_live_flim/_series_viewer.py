@@ -150,8 +150,12 @@ class SeriesViewer():
         self.live_sequence_viewer.receive_and_update(element.frame)
 
     def snap(self):
-        if self.live_sequence_viewer is not None:
-            self.live_sequence_viewer.snap()
+        sv = self.live_sequence_viewer
+        if sv is not None:
+            scroll_next = sv.live_index() == self.get_current_step()
+            sv.snap()
+            if scroll_next:
+                self.lifetime_viewer.dims.set_current_step(0, sv.live_index())
 
     def update_all(self):
         for sequence_viewer in self.get_sequence_viewers():
