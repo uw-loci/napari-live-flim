@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy
+import logging
 from typing import List
 
 import flimlib
@@ -114,8 +115,8 @@ class SeriesViewer():
                 set_points(self.phasor_image, tasks.phasor_image.result(timeout=0))
                 try:
                     self.phasor_image.face_color = tasks.phasor_face_color.result(timeout=0)
-                except RuntimeError:
-                    print(tasks.phasor_face_color.result(timeout=0))
+                except RuntimeError as e:
+                    logging.error(f"Attempting to set phasor face color resulted in {e}")
                 self.phasor_image.selected_data = {}
         else:
             set_points(self.phasor_image, None)
@@ -188,7 +189,8 @@ class SeriesViewer():
         decay_plot = CurveFittingPlot(viewer, scatter_color=color)
         set_selection(select_layer, LifetimeSelectionMetadata(select_layer, co_selection, decay_plot, self))
         select_layer.mouse_drag_callbacks.append(select_shape_drag)
-        select_layer.events.data.connect(handle_new_shape)
+        select_layer.events.data.connect(update_selection_callback)
+        select_layer.events.visible.connect(update_selection_callback)
         select_layer.mode = "select"
         viewer.window.qt_viewer.dockLayerList.setVisible(True)
         viewer.window.qt_viewer.dockLayerControls.setVisible(True)
@@ -207,7 +209,8 @@ class SeriesViewer():
         decay_plot = CurveFittingPlot(viewer, scatter_color=color)
         set_selection(select_layer, PhasorSelectionMetadata(select_layer, co_selection, decay_plot, self))
         select_layer.mouse_drag_callbacks.append(select_shape_drag)
-        select_layer.events.data.connect(handle_new_shape)
+        select_layer.events.data.connect(update_selection_callback)
+        select_layer.events.visible.connect(update_selection_callback)
         select_layer.mode = "select"
         viewer.window.qt_viewer.dockLayerList.setVisible(True)
         viewer.window.qt_viewer.dockLayerControls.setVisible(True)
@@ -299,8 +302,10 @@ class SelectionComputeTask:
             tasks = None
 
         self.params = series_viewer.params
-
-        mask_result = selection_metadata.compute_mask(photon_count)
+        if len(selection_metadata.selection.data) > 0 and selection_metadata.selection.visible:
+            mask_result = selection_metadata.compute_mask(photon_count)
+        else:
+            mask_result = None
         self.selection = executor.submit(selection_metadata.compute_selection, mask_result, tasks, photon_count, self.params)
         self.done = gather_futures(self.selection)
         self.done.add_done_callback(selection_metadata.update_callback)            
@@ -370,8 +375,6 @@ class LifetimeSelectionMetadata(SelectionMetadata):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
     def compute_mask(self, photon_count):
-        if len(self.selection.data) == 0:
-            return None
         masks = self.selection.to_masks(photon_count.shape[-3:-1]).astype(bool)
         union_mask = np.logical_or.reduce(masks)
         return MaskResult(mask=union_mask, extrema=None)
@@ -392,8 +395,6 @@ class LifetimeSelectionMetadata(SelectionMetadata):
 
 class PhasorSelectionMetadata(SelectionMetadata):
     def compute_mask(self, photon_count):
-        if len(self.selection.data) == 0:
-            return None
         extrema = np.ceil(self.selection._extent_data).astype(int) # the private field since `extent` is a `cached_property`
         bounding_shape = extrema[1] - extrema[0] + 1 # add one since extremas are inclusive
         offset=extrema[0]
@@ -475,19 +476,9 @@ def select_shape_drag(layer : Shapes, event : Event):
         update_selection(layer)
         yield
 
-def handle_new_shape(event : Event):
-    event_layer = event._sources[0]
-    # make sure to check if each of these operations has already been done since
-    # changing the data triggers this event which may cause infinite recursion
-    """
-    # delete all shapes except for the new shape
-    if len(event_layer.data) > 1 and event_layer.editable:
-        event_layer.selected_data = range(0, len(event_layer.data) - 1)
-        event_layer.remove_selected()
-        event_layer.seleted_data = [0]
-    """
-    if len(event_layer.data) > 0:
-        update_selection(event_layer)
+def update_selection_callback(event : Event):
+    event_layer = event.sources[0]
+    update_selection(event_layer)
 
 
 
