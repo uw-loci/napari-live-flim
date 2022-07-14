@@ -13,7 +13,6 @@ class FlimParams():
     period : float
     fit_start : int
     fit_end : int
-    delta_snapshots : bool
 
 @dataclass(frozen=True)
 class SelectionResult:

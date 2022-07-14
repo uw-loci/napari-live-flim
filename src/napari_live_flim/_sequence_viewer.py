@@ -256,6 +256,7 @@ class SequenceViewer:
         self.lifetime_image = image
 
     def validate_tasks(self, index):
+        index %= len(self.snapshots) # convert to positive index
         tasks = self.snapshots[index].tasks
         if tasks is None:
             self.snapshots[index].tasks = ComputeTask(index, self)
@@ -266,7 +267,11 @@ class SequenceViewer:
     def snap(self):
         if self.has_data():
             prev = self.snapshots[-1]
-            self.snapshots += [SnapshotData(prev.photon_count, prev.tasks)]
+            if self.series_viewer.delta_snapshots:
+                self.snapshots += [SnapshotData(prev.photon_count, None)]
+                self.validate_tasks(-1)
+            else:
+                self.snapshots += [SnapshotData(prev.photon_count, prev.tasks)]
             self.swap_lifetime_proxy_array()
 
     def receive_and_update(self, photon_count : np.ndarray):
@@ -326,7 +331,7 @@ class SequenceViewer:
 
     def get_photon_count(self, step) -> np.ndarray:
         if -len(self.snapshots) <= step < len(self.snapshots):
-            if self.series_viewer.params.delta_snapshots and step != 0 and step != -len(self.snapshots):
+            if self.series_viewer.delta_snapshots and step != 0 and step != -len(self.snapshots):
                 return self.snapshots[step].photon_count - self.snapshots[step - 1].photon_count
             else:
                 return self.snapshots[step].photon_count

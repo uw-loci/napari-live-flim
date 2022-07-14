@@ -41,7 +41,12 @@ class FlimViewer(QWidget):
         self.phasor_viewer = self.phasor_viewer = Viewer(title="Phasor Viewer")
         self.phasor_viewer.window.qt_viewer.dockLayerList.setVisible(False)
         self.phasor_viewer.window.qt_viewer.dockLayerControls.setVisible(False)
-        self.destroyed.connect(self.phasor_viewer.close)
+        def close_phasor_viewer():
+            try:
+                self.phasor_viewer.close_all()
+            except RuntimeError:
+                logging.info(f"Phasor viewer already closed!")
+        self.destroyed.connect(close_phasor_viewer)
 
         self.layout = QFormLayout()
         self.setLayout(self.layout)
@@ -52,6 +57,7 @@ class FlimViewer(QWidget):
         self.layout.addRow(self.port_widget.group)
 
         self.options_widget = OptionsWidget()
+        self.options_widget.delta_snapshots.toggled.connect(lambda d: self.series_viewer.set_delta_snapshots(d))
         self.options_widget.flim_params_widget.changed.connect(lambda p: self.series_viewer.set_params(p))
         self.options_widget.display_filters_widget.changed.connect(lambda f: self.series_viewer.set_filters(f))
         self.layout.addRow(self.options_widget.group)
@@ -68,6 +74,7 @@ class FlimViewer(QWidget):
         self.series_viewer = SeriesViewer(
             self.lifetime_viewer,
             self.phasor_viewer,
+            self.options_widget.delta_snapshots.isChecked(),
             self.options_widget.flim_params_widget.values(),
             self.options_widget.display_filters_widget.values(),
         )
@@ -180,6 +187,10 @@ class OptionsWidget(QObject):
         self.layout.addRow(self.display_filters_widget.group)
         self.display_filters_widget.changed.connect(lambda : self.changed_options.emit())
 
+        self.delta_snapshots = QCheckBox("Delta Snapshots")
+        self.delta_snapshots.toggled.connect(self.changed_options.emit)
+        self.layout.addRow(self.delta_snapshots)
+
         self.filepath = QLineEdit("./options.json")
         self.save = QPushButton("Save")
         self.save.clicked.connect(lambda: self.save_options())
@@ -198,6 +209,7 @@ class OptionsWidget(QObject):
         with open(path, "w") as outfile:
             opts_dict = {
                 "version" : OPTIONS_VERSION,
+                "delta_snapshots" : self.delta_snapshots.isChecked(),
                 "flim_params" : asdict(self.flim_params_widget.values()),
                 "display_filters" : asdict(self.display_filters_widget.values())
                 }
@@ -216,6 +228,7 @@ class OptionsWidget(QObject):
         with open(path, "r") as infile:
             opts_dict = json.load(infile)
             assert opts_dict["version"] == OPTIONS_VERSION
+            self.delta_snapshots.setChecked(opts_dict["delta_snapshots"])
             self.flim_params_widget.setValues(FlimParams(**opts_dict["flim_params"]))
             self.display_filters_widget.setValues(DisplayFilters(**opts_dict["display_filters"]))
 
@@ -260,10 +273,6 @@ class FlimParamsWidget(QObject):
         self.fit_start.valueChanged.connect(lambda a0 : self.fit_end.setMinimum(a0 + 1))
         self.fit_end.valueChanged.connect(lambda a0 : self.fit_start.setMaximum(a0 - 1))
 
-        self.delta_snapshots = QCheckBox("Delta Snapshots")
-        self.delta_snapshots.toggled.connect(self.changed_callback)
-        self.layout.addRow(self.delta_snapshots)
-
         self.period.setValue(DEFAULT_PERIOD)
 
         self.is_changed = False # if false, estimate fit range when data arrives
@@ -293,14 +302,12 @@ class FlimParamsWidget(QObject):
             self.period.value(),
             self.fit_start.value(),
             self.fit_end.value(),
-            self.delta_snapshots.isChecked(),
         )
 
     def setValues(self, flim_params : FlimParams):
         self.period.setValue(flim_params.period)
         self.fit_start.setValue(flim_params.fit_start)
         self.fit_end.setValue(flim_params.fit_end)
-        self.delta_snapshots.setChecked(flim_params.delta_snapshots)
         
 class DisplayFiltersWidget(QObject):
 

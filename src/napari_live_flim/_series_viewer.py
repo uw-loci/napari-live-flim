@@ -22,7 +22,8 @@ from ._dataclasses import *
 from ._sequence_viewer import SequenceViewer, ComputeTask
 
 class SeriesViewer():
-    def __init__(self, lifetime_viewer : Viewer, phasor_viewer : Viewer, params : FlimParams, filters : DisplayFilters):
+    def __init__(self, lifetime_viewer : Viewer, phasor_viewer : Viewer, delta_snapshots : bool, params : FlimParams, filters : DisplayFilters):
+        self.delta_snapshots = delta_snapshots
         self.params = params
         self.filters = filters
 
@@ -79,6 +80,10 @@ class SeriesViewer():
                     self.exposed_lifetime_image = None
                     self.update_displays()
 
+    def set_delta_snapshots(self, delta_snapshots : bool):
+        self.delta_snapshots = delta_snapshots
+        self.update_all()
+
     def set_params(self, params : FlimParams):
         self.params = params
         self.update_all()
@@ -130,6 +135,7 @@ class SeriesViewer():
         
         for layer in self.get_lifetime_layers():
                 layer.visible = False
+        self.lifetime_viewer.dims.set_current_step(0, 0)
 
         name = str(series_metadata.series_no) + "-" + str(series_metadata.port)
         sel = self.lifetime_viewer.layers.selection.copy()
