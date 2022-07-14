@@ -206,11 +206,9 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     np.nan_to_num(tau, copy=False)
     tau = tau.astype(int)
     tau[tau >= COLOR_DEPTH] = COLOR_DEPTH - 1 # this value is used to index into the colormap
-    intensity_scaled_tau = COLORMAP[tau]
-    intensity_scaled_tau[...,0] *= intensity
-    intensity_scaled_tau[...,1] *= intensity
-    intensity_scaled_tau[...,2] *= intensity
-    return intensity_scaled_tau
+    rgb_tau = COLORMAP[tau]
+    rgb_tau*= intensity[..., np.newaxis]
+    return rgb_tau
 
 def compute_intensity(photon_count : np.ndarray) -> np.ndarray:
     return np.nansum(photon_count, axis=-1)

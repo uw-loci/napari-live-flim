@@ -43,9 +43,9 @@ class FlimViewer(QWidget):
         self.phasor_viewer.window.qt_viewer.dockLayerControls.setVisible(False)
         def close_phasor_viewer():
             try:
-                self.phasor_viewer.close_all()
+                self.phasor_viewer.close()
             except RuntimeError:
-                logging.info(f"Phasor viewer already closed!")
+                logging.warn(f"Failed to close phasor viewer or already closed!")
         self.destroyed.connect(close_phasor_viewer)
 
         self.layout = QFormLayout()
