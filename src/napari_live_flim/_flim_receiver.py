@@ -14,6 +14,7 @@ class FlimReceiver(QObject):
     def start_receiving(self, port):
         self.stop_receiving()
         logging.info(f"Creating new receiver on port {port}")
+        print(f"Creating new receiver on port {port}")
         receiver = Receiver(port)
         self.receiver_worker = self.receive(receiver)
         self.receiver_worker.quit = lambda: receiver.quit()

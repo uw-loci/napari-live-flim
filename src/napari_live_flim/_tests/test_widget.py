@@ -14,6 +14,6 @@ def test_port_widget(make_napari_viewer, capsys):
 
     # read captured output and check that it's as we expected
     captured = capsys.readouterr()
-    assert captured.out == "creating new receiver on port 5555\n"
+    assert captured.out == "Creating new receiver on port 5555\n"
 
     my_widget.phasor_viewer.close_all()
