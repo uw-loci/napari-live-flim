@@ -105,9 +105,7 @@ class SeriesViewer():
         if self.should_show_displays() and sequence_viewer is not None:
             step = self.get_current_step()
             tasks = sequence_viewer.get_task(step)
-            print("should update displays")
             if tasks is not None and tasks.all_done():
-                print("tasks all done. can update displays")
                 set_points(self.phasor_image, tasks.phasor_image.result(timeout=0))
                 try:
                     self.phasor_image.face_color = tasks.phasor_face_color.result(timeout=0)
@@ -124,10 +122,9 @@ class SeriesViewer():
 
     def setup_sequence_viewer(self, series_metadata : SeriesMetadata):
         """
-        setup occurs after the first frame has arrived. 
-        At this point we know what shape the incoming data is
+        setup occurs after receiving the new_series signal
+        At this point we know what shape the incoming data will be
         """
-        print("setting up new sequence viewer")
         shape = series_metadata.shape
         image_shape = shape[-3:-1]
         
@@ -348,11 +345,11 @@ class SelectionMetadata(ABC):
         if self.tasks is None:
             self.tasks = SelectionComputeTask(self)
         if not self.tasks.is_valid() and not self.tasks.is_running():
-            print("restarting selection tasks")
+            # restart selection tasks
             self.tasks.cancel()
             self.tasks = SelectionComputeTask(self)
         if self.tasks.all_done():
-            print("updating selection displays")
+            #update selection displays
             self.decay_plot.update_with_selection(self.tasks)
             # TODO why does the following line take more than 50% of the runtime of this function?
             set_points(self.co_selection, self.tasks.selection.result(timeout=0).points)

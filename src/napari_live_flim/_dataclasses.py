@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 import numpy as np
 from flimlib import TripleIntegralResult, MarquardtResult
 

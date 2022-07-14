@@ -6,6 +6,7 @@ from time import time
 from typing import TYPE_CHECKING, List
 
 import flimlib
+import logging
 import numpy as np
 from napari.layers import Image
 
@@ -22,14 +23,14 @@ from ._dataclasses import *
 from .gather_futures import gather_futures
 
 
-# copied from stackoverflow.com :)
+# adapted from stackoverflow.com :)
 def timing(f):
     @wraps(f)
     def wrap(*args, **kw):
         ts = time()
         result = f(*args, **kw)
         te = time()
-        print(f"Function {f.__name__} took {te-ts:2.4f} seconds")
+        logging.debug(f"Function {f.__name__} took {te-ts:2.4f} seconds")
         return result
     return wrap
 
@@ -143,15 +144,13 @@ class LifetimeImageProxy:
     def _get_slices_at_index(self, index, slices):
         task = self._arrays[index]
         if task.all_done():
-            print("Displaying done data!!!!!!!!!!")
             self._most_recent = task.lifetime_image.result(timeout=0)
         else:
-            print("#############starting tasks####################")
             task.start()
         return self._most_recent[slices]
 
     def __array__(self):
-        print("################## NAPARI IS REQUESTING THE FULL ARRAY #####################")
+        logging.warning("Full array of proxy array has been unexpectedly requested.")
         return self[:]
     
     def __len__(self):
@@ -198,14 +197,12 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     
     intensity = intensity_future.result()
     tau[intensity < filters.min_intensity] = 0
-    maxi = np.nanmax(intensity)
-    intensity = intensity * (1 / maxi) if maxi > 0 else np.zeros_like(intensity)
+    intensity = normalize(intensity)
     tau[rld.chisq > filters.max_chisq] = 0
     # negative lifetimes are not valid
     tau[tau<0] = 0
     tau[tau > filters.max_tau] = 0
-    maxt = np.nanmax(tau)
-    tau = tau * (COLOR_DEPTH / maxt) if maxt > 0 else np.zeros_like(tau)
+    tau = normalize(tau, bound=COLOR_DEPTH)
     np.nan_to_num(tau, copy=False)
     tau = tau.astype(int)
     tau[tau >= COLOR_DEPTH] = COLOR_DEPTH - 1 # this value is used to index into the colormap
@@ -218,15 +215,19 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
 def compute_intensity(photon_count : np.ndarray) -> np.ndarray:
     return np.nansum(photon_count, axis=-1)
 
-def compute_phasor_image(phasor : Future[np.ndarray]):
-    return phasor.result().reshape(-1,phasor.result().shape[-1])
+def compute_phasor_image(phasor_future : Future[np.ndarray]):
+    phasor = phasor_future.result()
+    return phasor.reshape(-1,phasor.shape[-1])
 
-def compute_phasor_face_color(intensity : Future[np.ndarray]):
-    it = intensity.result()
-    it = it / it.max() # TODO what if max is zero?
-    phasor_intensity = it.ravel() * PHASOR_OPACITY_FACTOR
+def compute_phasor_face_color(intensity_future : Future[np.ndarray]):
+    intensity = normalize(intensity_future.result())
+    phasor_intensity = intensity.ravel() * PHASOR_OPACITY_FACTOR
     color = np.broadcast_to(1.0, phasor_intensity.shape)
     return np.asarray([color,color,color,phasor_intensity]).T
+
+def normalize(data : np.ndarray, bound=1) -> np.ndarray:
+    maximum = np.nanmax(data)
+    return data * (bound / maximum) if maximum > 0 else np.zeros_like(data)
 
 @timing
 def compute_phasor(photon_count : np.ndarray, params : FlimParams):
@@ -235,12 +236,12 @@ def compute_phasor(photon_count : np.ndarray, params : FlimParams):
     fend =  params.fit_end if params.fit_end <= photon_count.shape[-1] else photon_count.shape[-1]
     # about 0.5 sec for 256x256x256 data
     phasor = flimlib.GCI_Phasor(period, photon_count, fit_start=fstart, fit_end=fend, compute_fitted=False, compute_residuals=False, compute_chisq=False)
-    #reshape to work well with mapping / creating the image
-    #TODO can i have the last dimension be tuple? this would simplify indexing later
+    #reshape to work well with mapping / creating the phasor plot. Result has shape (height, width, 2)
     return np.round(np.dstack([(1 - phasor.v) * PHASOR_SCALE, phasor.u * PHASOR_SCALE])).astype(int)
 
-def compute_phasor_quadtree(phasor : Future[np.ndarray]):
-    return KDTree(phasor.result().reshape(-1, phasor.result().shape[-1]))
+def compute_phasor_quadtree(phasor_future : Future[np.ndarray]):
+    phasor = phasor_future.result()
+    return KDTree(phasor.reshape(-1, phasor.shape[-1]))
 
 @dataclass
 class SnapshotData:
@@ -325,7 +326,7 @@ class SequenceViewer:
 
     def get_photon_count(self, step) -> np.ndarray:
         if -len(self.snapshots) <= step < len(self.snapshots):
-            if self.series_viewer.params.delta_snapshots and step != 0:
+            if self.series_viewer.params.delta_snapshots and step != 0 and step != -len(self.snapshots):
                 return self.snapshots[step].photon_count - self.snapshots[step - 1].photon_count
             else:
                 return self.snapshots[step].photon_count

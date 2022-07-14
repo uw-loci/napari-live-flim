@@ -1,8 +1,6 @@
 import logging
-from dataclasses import dataclass
-from numpy import ndarray
 from qtpy.QtCore import QObject, Signal
-from flimstream import Receiver, SeriesReceiver
+from flimstream import Receiver
 from napari.qt.threading import thread_worker
 from ._dataclasses import *
 
@@ -15,7 +13,7 @@ class FlimReceiver(QObject):
 
     def start_receiving(self, port):
         self.stop_receiving()
-        print("creating new receiver on port", port)
+        logging.info(f"Creating new receiver on port {port}")
         receiver = Receiver(port)
         self.receiver_worker = self.receive(receiver)
         self.receiver_worker.quit = lambda: receiver.quit()
@@ -24,7 +22,7 @@ class FlimReceiver(QObject):
         
     def stop_receiving(self):
         if self.receiver_worker is not None:
-            print("quitting receiver...")
+            logging.info("Quitting receiver...")
             self.receiver_worker.quit()
             self.receiver_worker = None
 

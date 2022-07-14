@@ -1,5 +1,6 @@
 import json
 import sys
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
@@ -192,8 +193,9 @@ class OptionsWidget(QObject):
         self.layout.addRow(self.open, self.save_as)
 
     def save_options(self):
-        print("saving parameters to", Path(self.filepath.text()).absolute)
-        with open(self.filepath.text(),"w") as outfile:
+        path = Path(self.filepath.text()).absolute()
+        logging.info(f"saving parameters to {path}")
+        with open(path, "w") as outfile:
             opts_dict = {
                 "version" : OPTIONS_VERSION,
                 "flim_params" : asdict(self.flim_params_widget.values()),
@@ -208,9 +210,10 @@ class OptionsWidget(QObject):
 
     def open_options(self):
         fs = FileSelector()
-        self.filepath.setText(fs.open_file(self.filepath.text()))
-        print("loading parameters from", Path(self.filepath.text()).absolute)
-        with open(self.filepath.text(), "r") as infile:
+        path = Path(fs.open_file(self.filepath.text())).absolute()
+        self.filepath.setText(str(path))
+        logging.info(f"loading parameters from {path}")
+        with open(path, "r") as infile:
             opts_dict = json.load(infile)
             assert opts_dict["version"] == OPTIONS_VERSION
             self.flim_params_widget.setValues(FlimParams(**opts_dict["flim_params"]))
@@ -271,7 +274,6 @@ class FlimParamsWidget(QObject):
             self.changed.emit(self.values())
 
     def initialize_fit_range(self, series_metadata : SeriesMetadata):
-        print("initializing fit range")
         if not self.is_changed:
             tau_axis_size = series_metadata.shape[-1]
             self.fit_end.setValue((tau_axis_size * 2 ) // 3)

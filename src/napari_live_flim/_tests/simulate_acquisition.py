@@ -10,6 +10,8 @@ from magicgui import magicgui
 from napari.qt.threading import thread_worker
 from napari_live_flim.data_generator import data_generator, SHAPE
 
+logging.basicConfig(level=logging.INFO)
+
 PORT = 5555
 series_no = -1
 
