@@ -4,6 +4,14 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
+import matplotlib
+
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.colorbar import Colorbar
+from matplotlib.figure import Figure
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import ListedColormap
+import matplotlib.pyplot as plt
 
 from superqt import ensure_main_thread
 from napari import Viewer
@@ -334,12 +342,46 @@ class DisplayFiltersWidget(QObject):
         self.max_chisq.valueChanged.connect(changed_callback)
         self.layout.addRow("Max χ2", self.max_chisq)
 
+        self.min_tau = QDoubleSpinBox()
+        self.min_tau.setRange(0, DEFAULT_MAX_TAU)
+        self.min_tau.setValue(0)
+        self.min_tau.setSingleStep(0.1)
+        self.min_tau.setDecimals(3)
+        self.min_tau.valueChanged.connect(changed_callback)
+        self.layout.addRow("Min Lifetime (ns)", self.min_tau)
+
         self.max_tau = QDoubleSpinBox()
         self.max_tau.setRange(0, MAX_VALUE)
         self.max_tau.setValue(DEFAULT_MAX_TAU)
         self.max_tau.setSingleStep(0.1)
+        self.max_tau.setDecimals(3)
         self.max_tau.valueChanged.connect(changed_callback)
-        self.layout.addRow("Max Lifetime", self.max_tau)
+        self.layout.addRow("Max Lifetime (ns)", self.max_tau)
+
+        self.min_tau.valueChanged.connect(lambda a0 : self.max_tau.setMinimum(a0))
+        self.max_tau.valueChanged.connect(lambda a0 : self.min_tau.setMaximum(a0))
+
+        with plt.style.context("dark_background"):
+            self.colorbar_widget = FigureCanvasQTAgg(Figure(constrained_layout=True))
+            fig = self.colorbar_widget.figure
+            ax = fig.add_subplot()
+            fig.subplots_adjust(bottom=0.5)
+
+            self.mappable = ScalarMappable(cmap=ListedColormap(COLORMAP))
+            self.mappable.set_clim(self.min_tau.value(), self.max_tau.value())
+            colorbar = fig.colorbar(self.mappable, cax=ax, orientation="horizontal")
+            colorbar.minorticks_on()
+
+            self.colorbar_widget.setFixedWidth(230)
+            self.colorbar_widget.setFixedHeight(50)
+        
+        self.min_tau.valueChanged.connect(self.update_tau_range)
+        self.max_tau.valueChanged.connect(self.update_tau_range)
+        self.layout.addRow(self.colorbar_widget)
+
+    def update_tau_range(self):
+        self.mappable.set_clim(self.min_tau.value(), self.max_tau.value())
+        self.colorbar_widget.draw_idle()
 
     def values(self):
         return DisplayFilters(
