@@ -104,7 +104,7 @@ class LifetimeImageProxy:
         self._arrays = tasks_list
         self._image_shape = image_shape
         if old_proxy.shape != image_shape:
-            raise ValueError("old proxy must have the same shape as this")
+            raise ValueError(f"old proxy with shape {old_proxy.shape} must match new shape {image_shape}")
         self._most_recent = old_proxy
         self._dtype = dtype
 
@@ -159,7 +159,7 @@ class LifetimeImageProxy:
 def create_lifetime_image_proxy(sequence_viewer : "SequenceViewer", dtype=np.float32):
     tasks_list = sequence_viewer.get_tasks_list()
 
-    image_shape = sequence_viewer.get_image_shape() + (3,) # rgb
+    image_shape = sequence_viewer.get_image_shape() + (4,) # rgb
     possible_old_proxy = sequence_viewer.lifetime_image.data
     if isinstance(possible_old_proxy, LifetimeImageProxy):
         old_proxy = possible_old_proxy.get_old_proxy()
@@ -196,18 +196,20 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     tau = rld.tau
     
     intensity = intensity_future.result()
-    tau[intensity < filters.min_intensity] = 0
+    invalid_indexer = np.where(
+        (np.isnan(tau)) |
+        (rld.chisq > filters.max_chisq) |
+        (tau < filters.min_tau) |
+        (tau > filters.max_tau)
+    )
+    intensity[invalid_indexer] = np.nan
+    tau[invalid_indexer] = np.nan
     intensity = normalize(intensity)
-    tau[rld.chisq > filters.max_chisq] = 0
-    # negative lifetimes are not valid
-    tau[tau<0] = 0
-    tau[tau > filters.max_tau] = 0
-    tau = normalize(tau, bound=COLOR_DEPTH)
+    np.nan_to_num(intensity, copy=False)
+    tau = normalize(tau, min_in=filters.min_tau, max_in=filters.max_tau)
     np.nan_to_num(tau, copy=False)
-    tau = tau.astype(int)
-    tau[tau >= COLOR_DEPTH] = COLOR_DEPTH - 1 # this value is used to index into the colormap
-    rgb_tau = COLORMAP[tau]
-    rgb_tau*= intensity[..., np.newaxis]
+    rgb_tau = COLORMAPS[filters.colormap](tau)
+    rgb_tau[...,:3] *= intensity[..., np.newaxis]
     return rgb_tau
 
 def compute_intensity(photon_count : np.ndarray) -> np.ndarray:
@@ -223,9 +225,16 @@ def compute_phasor_face_color(intensity_future : Future[np.ndarray]):
     color = np.broadcast_to(1.0, phasor_intensity.shape)
     return np.asarray([color,color,color,phasor_intensity]).T
 
-def normalize(data : np.ndarray, bound=1) -> np.ndarray:
-    maximum = np.nanmax(data)
-    return data * (bound / maximum) if maximum > 0 else np.zeros_like(data)
+def normalize(data : np.ndarray, min_in=None, max_in=None, min_out=0, max_out=1) -> np.ndarray:
+    if min_in is None:
+        min_in = np.nanmin(data)
+    if max_in is None:
+        max_in = np.nanmax(data)
+    scale_in = max_in - min_in
+    if scale_in <= 0 or np.isnan(scale_in):
+        return(np.zeros_like(data) + min_out)
+    scale_out = max_out - min_out
+    return ((data - min_in) * (scale_out / scale_in)) + min_out
 
 @timing
 def compute_phasor(photon_count : np.ndarray, params : FlimParams):

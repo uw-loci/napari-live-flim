@@ -4,6 +4,14 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
+import matplotlib
+
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.colorbar import Colorbar
+from matplotlib.figure import Figure
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import ListedColormap
+import matplotlib.pyplot as plt
 
 from superqt import ensure_main_thread
 from napari import Viewer
@@ -21,6 +29,7 @@ from qtpy.QtWidgets import (
     QPushButton,
     QSpinBox,
     QWidget,
+    QComboBox,
 )
 
 executor = ThreadPoolExecutor()
@@ -212,7 +221,7 @@ class OptionsWidget(QObject):
                 "delta_snapshots" : self.delta_snapshots.isChecked(),
                 "flim_params" : asdict(self.flim_params_widget.values()),
                 "display_filters" : asdict(self.display_filters_widget.values())
-                }
+            }
             json.dump(opts_dict, outfile, indent=4)
 
     def save_as_options(self):
@@ -320,13 +329,9 @@ class DisplayFiltersWidget(QObject):
         self.layout = QFormLayout()
         self.group.setLayout(self.layout)
 
-        changed_callback = lambda: self.changed.emit(self.values())
-
-        self.min_intensity = QSpinBox()
-        self.min_intensity.setRange(0, MAX_VALUE)
-        self.min_intensity.setValue(DEFUALT_MIN_INTENSITY)
-        self.min_intensity.valueChanged.connect(changed_callback)
-        self.layout.addRow("Min Intensity", self.min_intensity)
+        def changed_callback():
+            self.changed.emit(self.values())
+            self.update_colorbar()
 
         self.max_chisq = QDoubleSpinBox()
         self.max_chisq.setRange(0, MAX_VALUE)
@@ -334,24 +339,65 @@ class DisplayFiltersWidget(QObject):
         self.max_chisq.valueChanged.connect(changed_callback)
         self.layout.addRow("Max χ2", self.max_chisq)
 
+        self.min_tau = QDoubleSpinBox()
+        self.min_tau.setRange(0, DEFAULT_MAX_TAU)
+        self.min_tau.setValue(0)
+        self.min_tau.setSingleStep(0.1)
+        self.min_tau.setDecimals(3)
+        self.min_tau.valueChanged.connect(changed_callback)
+        self.layout.addRow("Min Lifetime (ns)", self.min_tau)
+
         self.max_tau = QDoubleSpinBox()
         self.max_tau.setRange(0, MAX_VALUE)
         self.max_tau.setValue(DEFAULT_MAX_TAU)
         self.max_tau.setSingleStep(0.1)
+        self.max_tau.setDecimals(3)
         self.max_tau.valueChanged.connect(changed_callback)
-        self.layout.addRow("Max Lifetime", self.max_tau)
+        self.layout.addRow("Max Lifetime (ns)", self.max_tau)
+
+        self.min_tau.valueChanged.connect(lambda a0 : self.max_tau.setMinimum(a0))
+        self.max_tau.valueChanged.connect(lambda a0 : self.min_tau.setMaximum(a0))
+
+        self.colormap = QComboBox()
+        self.colormap.addItems(COLORMAPS.keys())
+        if "BH_compat" in COLORMAPS.keys():
+            self.colormap.setCurrentText("BH_compat")
+        self.colormap.currentTextChanged.connect(changed_callback)
+        self.layout.addRow("Colormap", self.colormap)
+
+        with plt.style.context("dark_background"):
+            self.colorbar_widget = FigureCanvasQTAgg(Figure(constrained_layout=True))
+            fig = self.colorbar_widget.figure
+            ax = fig.add_subplot()
+            fig.subplots_adjust(bottom=0.5)
+
+            self.mappable = ScalarMappable(cmap=COLORMAPS[self.colormap.currentText()])
+            self.mappable.set_clim(self.min_tau.value(), self.max_tau.value())
+            colorbar = fig.colorbar(self.mappable, cax=ax, orientation="horizontal")
+            colorbar.minorticks_on()
+
+            self.colorbar_widget.setFixedWidth(230)
+            self.colorbar_widget.setFixedHeight(50)
+        self.layout.addRow(self.colorbar_widget)
+
+    def update_colorbar(self):
+        self.mappable.set_cmap(COLORMAPS[self.colormap.currentText()])
+        self.mappable.set_clim(self.min_tau.value(), self.max_tau.value())
+        self.colorbar_widget.draw_idle()
 
     def values(self):
         return DisplayFilters(
-            self.min_intensity.value(),
             self.max_chisq.value(),
+            self.min_tau.value(),
             self.max_tau.value(),
+            self.colormap.currentText(),
         )
 
     def setValues(self, display_filters : DisplayFilters):
-        self.min_intensity.setValue(display_filters.min_intensity)
         self.max_chisq.setValue(display_filters.max_chisq)
+        self.min_tau.setValue(display_filters.min_tau)
         self.max_tau.setValue(display_filters.max_tau)
+        self.colormap.setCurrentText(display_filters.colormap)
 
 class SelectionWidget(QObject):
     def __init__(self) -> None:
