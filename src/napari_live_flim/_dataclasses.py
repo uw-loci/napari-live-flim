@@ -4,9 +4,10 @@ from flimlib import TripleIntegralResult, MarquardtResult
 
 @dataclass(frozen=True)
 class DisplayFilters():
-    min_intensity : int
     max_chisq : float
+    min_tau : float
     max_tau : float
+    colormap : str
 
 @dataclass(frozen=True)
 class FlimParams():

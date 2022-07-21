@@ -1,5 +1,7 @@
 import numpy as np
 import colorsys
+from pathlib import Path
+from matplotlib.colors import ListedColormap, Normalize
 
 OPTIONS_VERSION = 1
 MAX_VALUE = 1000000 # large number used as max value for certain user inputs
@@ -12,7 +14,6 @@ DEFUALT_MIN_INTENSITY = 10
 DEFUALT_MAX_CHISQ = float(MAX_VALUE)
 DEFAULT_MAX_TAU = 10.0
 COLOR_DEPTH = 256
-COLORMAP = np.array([colorsys.hsv_to_rgb(f, 1.0, 1) for f in np.linspace(0,1,COLOR_DEPTH)], dtype=np.float32)
 
 # not actually empty. Ideally I could use None as input to napari but it doesn't like it
 EMPTY_RGB_IMAGE = np.zeros((1,1,3))
@@ -34,3 +35,12 @@ COLOR_DICT = {  "red":"#FF0000",
                 "magenta":"#FF00FF",
                 "yellow":"#FFFF00",
             }
+
+COLORMAPS = {"intensity" : ListedColormap([1,1,1], "intensity")}
+
+for path in Path(__file__).resolve().parent.joinpath('colormaps').iterdir():
+    arr = np.genfromtxt(path, delimiter=",", dtype=int)
+    norm = Normalize(0, 255)
+    name = path.stem
+    cm = ListedColormap(norm(arr), name)
+    COLORMAPS[name] = cm
