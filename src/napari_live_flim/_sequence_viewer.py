@@ -209,7 +209,7 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     tau = normalize(tau, min_in=filters.min_tau, max_in=filters.max_tau)
     np.nan_to_num(tau, copy=False)
     rgb_tau = COLORMAPS[filters.colormap](tau)
-    rgb_tau*= intensity[..., np.newaxis]
+    rgb_tau[...,:3] *= intensity[..., np.newaxis]
     return rgb_tau
 
 def compute_intensity(photon_count : np.ndarray) -> np.ndarray:
