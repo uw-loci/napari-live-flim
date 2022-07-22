@@ -27,18 +27,20 @@ class SeriesViewer():
         self.delta_snapshots = delta_snapshots
         self.params = params
         self.filters = filters
-
         self.lifetime_viewer = lifetime_viewer
+        self.phasor_viewer = phasor_viewer
+
         self.exposed_lifetime_image = None
         self.live_sequence_viewer = None
         self.lifetime_viewer.layers.events.connect(self.validate_exposed_lifetime_image)
+        self.lifetime_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.lifetime_viewer, self.phasor_viewer))
+        self.phasor_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.phasor_viewer, self.lifetime_viewer))
         self.lifetime_viewer.dims.events.current_step.connect(self.update_displays)
         self.lifetime_viewer.dims.events.order.connect(self.update_displays)
         self.lifetime_viewer.grid.events.enabled.connect(self.update_displays)
         
         self.reset_current_step()
 
-        self.phasor_viewer = phasor_viewer
         autoscale_viewer(self.phasor_viewer, (PHASOR_SCALE, PHASOR_SCALE))
         #add the phasor circle
         phasor_circle = np.asarray([[PHASOR_SCALE, 0.5 * PHASOR_SCALE],[0.5 * PHASOR_SCALE,0.5 * PHASOR_SCALE]])
@@ -70,7 +72,9 @@ class SeriesViewer():
         return [get_sequence_viewer(layer) for layer in self.get_lifetime_layers(include_invisible=include_invisible)]
 
     def validate_exposed_lifetime_image(self, event : Event):
-        if event.type == "reordered" or event.type == "visible":
+        print(self.lifetime_viewer.layers.selection)
+        typ = event.type
+        if typ == "reordered" or typ == "visible" or typ == "removed":
             layers = self.get_lifetime_layers(include_invisible=False)
             if len(layers) == 1:
                 if self.get_exposed_sequence_viewer() is not get_sequence_viewer(layers[-1]):
@@ -80,6 +84,25 @@ class SeriesViewer():
                 if self.exposed_lifetime_image is not None:
                     self.exposed_lifetime_image = None
                     self.update_displays()
+
+    def cleanup_removed_selection(self, layer : Layer, viewer : Viewer, co_viewer : Viewer):
+        selection = get_selection(layer)
+        if selection is not None:
+            try:
+                co_viewer.layers.remove(selection.co_selection)
+                viewer.window.remove_dock_widget(selection.decay_plot.dock_widget)
+            except ValueError:
+                pass # already removed
+        else:
+            for co_layer in co_viewer.layers:
+                selection = get_selection(co_layer)
+                if selection is not None and selection.co_selection is layer:
+                    try:
+                        co_viewer.layers.remove(selection.selection)
+                        co_viewer.window.remove_dock_widget(selection.decay_plot.dock_widget)
+                    except ValueError:
+                        pass # already removed
+
 
     def set_delta_snapshots(self, delta_snapshots : bool):
         self.delta_snapshots = delta_snapshots
