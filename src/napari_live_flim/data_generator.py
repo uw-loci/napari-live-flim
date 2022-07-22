@@ -19,8 +19,11 @@ def data_generator():
     while True:
         for i in range(SAMPLES):
             for j in range(SAMPLES):
-                a = A_IN + i * A_INC
+                # lifetime varies horizontally
                 tau = TAU_IN + j * TAU_INC
+                # intensity varies vertically. dividing by tau keeps the 
+                # intensity (integral of the exponential) constant horizontally
+                a = (A_IN + i * A_INC) * (TAU_IN / tau)
                 decay = a * np.exp(-time / tau) * np.random.poisson(size=SAMPLES)
                 decay[decay < 0] = 0
                 photon_count[i][j] += np.round(decay).astype(np.uint16)
