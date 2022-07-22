@@ -2,6 +2,7 @@ import numpy as np
 import colorsys
 from pathlib import Path
 from matplotlib.colors import ListedColormap, Normalize
+from matplotlib.cm import get_cmap
 
 OPTIONS_VERSION = 1
 MAX_VALUE = 1000000 # large number used as max value for certain user inputs
@@ -36,7 +37,10 @@ COLOR_DICT = {  "red":"#FF0000",
                 "yellow":"#FFFF00",
             }
 
-COLORMAPS = {"intensity" : ListedColormap([1,1,1], "intensity")}
+COLORMAPS = {
+    "intensity" : ListedColormap([1,1,1], "intensity"),
+    "turbo" : get_cmap("turbo")
+}
 
 for path in Path(__file__).resolve().parent.joinpath('colormaps').iterdir():
     arr = np.genfromtxt(path, delimiter=",", dtype=int)
