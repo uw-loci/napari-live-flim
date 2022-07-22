@@ -188,12 +188,22 @@ class SeriesViewer():
         for sequence_viewer in self.get_sequence_viewers():
             sequence_viewer.update()
         
-
     @ensure_main_thread
     def update_selections_callback(self, done):
         self.update_selections()
 
-    # TODO selections should only select the current viewed channel (if channels are added)
+    def show_plots(self):
+        for layer in self.lifetime_viewer.layers:
+            show_decay_plot(layer)
+        for layer in self.phasor_viewer.layers:
+            show_decay_plot(layer)
+
+    def hide_plots(self):
+        for layer in self.lifetime_viewer.layers:
+            hide_decay_plot(layer)
+        for layer in self.phasor_viewer.layers:
+            hide_decay_plot(layer)
+
     def update_selections(self):
         for layer in self.lifetime_viewer.layers:
             update_selection(layer)
@@ -503,5 +513,14 @@ def update_selection_callback(event : Event):
     event_layer = event.sources[0]
     update_selection(event_layer)
 
+def show_decay_plot(layer : Shapes):
+    selection = get_selection(layer)
+    if selection is not None:
+        selection.decay_plot.dock_widget.show()
+
+def hide_decay_plot(layer : Shapes):
+    selection = get_selection(layer)
+    if selection is not None:
+        selection.decay_plot.dock_widget.hide()
 
 

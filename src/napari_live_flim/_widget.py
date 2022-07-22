@@ -47,7 +47,7 @@ class FlimViewer(QWidget):
         super().__init__()
 
         self.lifetime_viewer = napari_viewer
-        self.phasor_viewer = self.phasor_viewer = Viewer(title="Phasor Viewer")
+        self.phasor_viewer = Viewer(title="Phasor Viewer")
         self.phasor_viewer.window.qt_viewer.dockLayerList.setVisible(False)
         self.phasor_viewer.window.qt_viewer.dockLayerControls.setVisible(False)
         def close_phasor_viewer():
@@ -65,27 +65,32 @@ class FlimViewer(QWidget):
         self.port_widget.port_removed.connect(flim_receiver.stop_receiving)
         self.layout.addRow(self.port_widget.group)
 
-        self.options_widget = OptionsWidget()
-        self.options_widget.delta_snapshots.toggled.connect(lambda d: self.series_viewer.set_delta_snapshots(d))
-        self.options_widget.flim_params_widget.changed.connect(lambda p: self.series_viewer.set_params(p))
-        self.options_widget.display_filters_widget.changed.connect(lambda f: self.series_viewer.set_filters(f))
-        self.layout.addRow(self.options_widget.group)
+        self.flim_params_widget = FlimParamsWidget()
+        self.flim_params_widget.changed.connect(lambda p: self.series_viewer.set_params(p))
+        self.layout.addRow(self.flim_params_widget.group)
 
-        self.selection_widget = SelectionWidget()
-        self.selection_widget.new_lifetime_selection_button.clicked.connect(lambda: self.series_viewer.create_lifetime_select_layer())
-        self.selection_widget.new_phasor_selection_button.clicked.connect(lambda: self.series_viewer.create_phasor_select_layer())
-        self.layout.addRow(self.selection_widget.group)
+        self.display_filters_widget = DisplayFiltersWidget()
+        self.display_filters_widget.changed.connect(lambda f: self.series_viewer.set_filters(f))
+        self.layout.addRow(self.display_filters_widget.group)
 
-        self.snap_widget = SnapWidget()
-        self.snap_widget.snap_button.clicked.connect(lambda: self.series_viewer.snap())
-        self.layout.addRow(self.snap_widget.group)
+        self.actions_widget = ActionsWidget()
+        self.actions_widget.snap_button.clicked.connect(lambda: self.series_viewer.snap())
+        self.actions_widget.delta_snapshots.toggled.connect(lambda d: self.series_viewer.set_delta_snapshots(d))
+        self.actions_widget.hide_plots_button.clicked.connect(lambda: self.series_viewer.hide_plots())
+        self.actions_widget.show_plots_button.clicked.connect(lambda: self.series_viewer.show_plots())
+        self.actions_widget.new_lifetime_selection_button.clicked.connect(lambda: self.series_viewer.create_lifetime_select_layer())
+        self.actions_widget.new_phasor_selection_button.clicked.connect(lambda: self.series_viewer.create_phasor_select_layer())
+        self.layout.addRow(self.actions_widget.group)
+
+        self.save_settings_widget = SaveSettingsWidget()
+        self.layout.addRow(self.save_settings_widget.group)
 
         self.series_viewer = SeriesViewer(
             self.lifetime_viewer,
             self.phasor_viewer,
-            self.options_widget.delta_snapshots.isChecked(),
-            self.options_widget.flim_params_widget.values(),
-            self.options_widget.display_filters_widget.values(),
+            self.actions_widget.delta_snapshots.isChecked(),
+            self.flim_params_widget.values(),
+            self.display_filters_widget.values(),
         )
 
         flim_receiver.new_series.connect(self.new_series)
@@ -178,27 +183,15 @@ class FileSelector(QWidget):
         filepath = QFileDialog.getOpenFileName(self, "Open - Options", filepath, "Json (*.json)")
         return filepath[0]
 
-class OptionsWidget(QObject):
+class SaveSettingsWidget(QObject):
     changed_options = Signal()
 
     def __init__(self) -> None:
-        super(OptionsWidget, self).__init__()
+        super(SaveSettingsWidget, self).__init__()
 
         self.layout = QFormLayout()
         self.group = QGroupBox("Options")
         self.group.setLayout(self.layout)
-
-        self.flim_params_widget = FlimParamsWidget()
-        self.layout.addRow(self.flim_params_widget.group)
-        self.flim_params_widget.changed.connect(lambda : self.changed_options.emit())
-
-        self.display_filters_widget = DisplayFiltersWidget()
-        self.layout.addRow(self.display_filters_widget.group)
-        self.display_filters_widget.changed.connect(lambda : self.changed_options.emit())
-
-        self.delta_snapshots = QCheckBox("Delta Snapshots")
-        self.delta_snapshots.toggled.connect(self.changed_options.emit)
-        self.layout.addRow(self.delta_snapshots)
 
         self.filepath = QLineEdit("./options.json")
         self.save = QPushButton("Save")
@@ -399,28 +392,26 @@ class DisplayFiltersWidget(QObject):
         self.max_tau.setValue(display_filters.max_tau)
         self.colormap.setCurrentText(display_filters.colormap)
 
-class SelectionWidget(QObject):
+class ActionsWidget(QObject):
     def __init__(self) -> None:
-        super(SelectionWidget, self).__init__()
+        super(ActionsWidget, self).__init__()
 
-        self.layout = QHBoxLayout()
+        self.layout = QFormLayout()
         self.group = QGroupBox()
         self.group.setLayout(self.layout)
+
+        self.snap_button = QPushButton("Snapshot")
+        self.snap_button.setMinimumWidth(110)
+        self.delta_snapshots = QCheckBox("Delta Snapshots")
+        self.layout.addRow(self.snap_button, self.delta_snapshots)
+
+        self.hide_plots_button = QPushButton("Hide Plots")
+        self.hide_plots_button.setMinimumWidth(110)
+        self.show_plots_button = QPushButton("Show Plots")
+        self.layout.addRow(self.hide_plots_button, self.show_plots_button)
 
         self.new_lifetime_selection_button = QPushButton("New Lifetime\nSelection")
-        self.layout.addWidget(self.new_lifetime_selection_button)
-
+        self.new_lifetime_selection_button.setMinimumWidth(110)
         self.new_phasor_selection_button = QPushButton("New Phasor\nSelection")
-        self.layout.addWidget(self.new_phasor_selection_button)
-
-class SnapWidget(QObject):
-    def __init__(self) -> None:
-        super(SnapWidget, self).__init__()
-
-        self.layout = QHBoxLayout()
-        self.group = QGroupBox()
-        self.group.setLayout(self.layout)
-
-        self.snap_button = QPushButton("Snap")
-        self.layout.addWidget(self.snap_button)
+        self.layout.addRow(self.new_lifetime_selection_button, self.new_phasor_selection_button)
         
