@@ -3,8 +3,9 @@ import colorsys
 from pathlib import Path
 from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.cm import get_cmap
+from ._dataclasses import *
 
-OPTIONS_VERSION = 1
+SETTINGS_VERSION = 1
 MAX_VALUE = 1000000 # large number used as max value for certain user inputs
 
 FONT_SIZE = 10
@@ -48,3 +49,9 @@ for path in Path(__file__).resolve().parent.joinpath('colormaps').iterdir():
     name = path.stem
     cm = ListedColormap(norm(arr), name)
     COLORMAPS[name] = cm
+
+DEFAULT_FLIM_PARAMS = FlimParams(DEFAULT_PERIOD, 0, 1)
+DEFAULT_DELTA_SNAPSHOTS = False
+DEFAULT_DISPLAY_SETTINGS = DisplaySettings(MAX_VALUE, 0, DEFAULT_MAX_TAU, "BH_compat" if "BH_compat" in COLORMAPS.keys() else "turbo")
+DEFAULT_SETTINGS_FILEPATH = "settings.json"
+DEFAULT_PORT = 4444

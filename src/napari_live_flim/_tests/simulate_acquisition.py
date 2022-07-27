@@ -18,20 +18,20 @@ series_no = -1
 @thread_worker
 def send_series(viewer : FlimViewer, series_no, frames, interval):
     data_gen = data_generator()
-    viewer.new_series(SeriesMetadata(series_no, "TEST", SHAPE))
+    viewer.series_viewer.new_series(SeriesMetadata(series_no, "TEST", SHAPE))
 
     for i in range(frames):
         start = time.time()
 
         frame = next(data_gen)
-        viewer.new_element(ElementData(series_no, i, frame))
+        viewer.series_viewer.new_element(ElementData(series_no, i, frame))
         finish = time.time()
         excess = finish - start - interval
         if excess > 0:
             logging.warning(f"Frame interval exceeded by {excess} s")
         else:
             time.sleep(-excess)
-    viewer.end_series()
+    viewer.series_viewer.end_series()
 
 def create_send_widget(viewer : napari.Viewer, flim_viewer : FlimViewer):
     @magicgui(call_button="send",)
@@ -46,6 +46,6 @@ if __name__ == "__main__":
     viewer = napari.Viewer()
     flim_viewer = FlimViewer(viewer)
     viewer.window.add_dock_widget(flim_viewer)
-    flim_viewer.port_widget.port_line_edit.setText(str(PORT))
+    flim_viewer.series_viewer.port_widget.port_line_edit.setText(str(PORT))
     create_send_widget(viewer, flim_viewer)
     napari.run()

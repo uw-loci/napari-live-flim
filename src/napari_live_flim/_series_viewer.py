@@ -1,35 +1,45 @@
 from __future__ import annotations
+
 import copy
+import json
 import logging
+from abc import ABC, abstractmethod
+from dataclasses import asdict
 from typing import List
 
 import flimlib
-from napari import Viewer
-from napari.utils.events import Event
-from napari.layers import Layer, Image, Shapes, Points
 import numpy as np
-from .plot_widget import Fig
-from ._widget import executor
-
+from napari import Viewer
+from napari.layers import Image, Layer, Points, Shapes
+from napari.utils.events import Event
 from superqt import ensure_main_thread
 from vispy.scene.visuals import Text
 
-from abc import ABC, abstractmethod
-
 from ._constants import *
-from .gather_futures import gather_futures
-
 from ._dataclasses import *
-from ._sequence_viewer import SequenceViewer, ComputeTask
+from ._sequence_viewer import ComputeTask, SequenceViewer
+from ._widget import *
+from ._widget import executor
+from .gather_futures import gather_futures
+from .plot_widget import Fig
+
+from ._flim_receiver import FlimReceiver
+
+flim_receiver = FlimReceiver() # global instance to prevent connecting to the same UDP port twice
 
 class SeriesViewer():
-    def __init__(self, lifetime_viewer : Viewer, phasor_viewer : Viewer, delta_snapshots : bool, params : FlimParams, filters : DisplayFilters):
-        self.delta_snapshots = delta_snapshots
-        self.params = params
-        self.filters = filters
-        self.lifetime_viewer = lifetime_viewer
-        self.phasor_viewer = phasor_viewer
+    def __init__(self, napari_viewer : Viewer):
 
+        self._flim_params = DEFAULT_FLIM_PARAMS
+        self._display_settings = DEFAULT_DISPLAY_SETTINGS
+        self._delta_snapshots = DEFAULT_DELTA_SNAPSHOTS
+        self._settings_filepath = DEFAULT_SETTINGS_FILEPATH
+        self._port = DEFAULT_PORT
+        
+        self.lifetime_viewer = napari_viewer
+        self.phasor_viewer = Viewer(title="Phasor Viewer")
+        self.phasor_viewer.window.qt_viewer.dockLayerList.setVisible(False)
+        self.phasor_viewer.window.qt_viewer.dockLayerControls.setVisible(False)
         self.exposed_lifetime_image = None
         self.live_sequence_viewer = None
         self.lifetime_viewer.layers.events.connect(self.validate_exposed_lifetime_image)
@@ -38,6 +48,39 @@ class SeriesViewer():
         self.lifetime_viewer.dims.events.current_step.connect(self.update_displays)
         self.lifetime_viewer.dims.events.order.connect(self.update_displays)
         self.lifetime_viewer.grid.events.enabled.connect(self.update_displays)
+
+        self.port_widget = PortSelection()
+        self.port_widget.changed.connect(lambda p : setattr(self, "port", p))
+
+        self.flim_params_widget = FlimParamsWidget()
+        self.flim_params_widget.changed.connect(lambda fp : setattr(self, "flim_params", fp))
+
+        self.display_settings_widget = DisplaySettingsWidget()
+        self.display_settings_widget.changed.connect(lambda ds : setattr(self, "display_settings", ds))
+
+        self.actions_widget = ActionsWidget()
+        self.actions_widget.snap_button.clicked.connect(lambda: self.snap())
+        self.actions_widget.delta_snapshots.toggled.connect(lambda ds : setattr(self, "delta_snapshots", ds))
+        self.actions_widget.hide_plots_button.clicked.connect(lambda: self.hide_plots())
+        self.actions_widget.show_plots_button.clicked.connect(lambda: self.show_plots())
+        self.actions_widget.new_lifetime_selection_button.clicked.connect(lambda: self.create_lifetime_select_layer())
+        self.actions_widget.new_phasor_selection_button.clicked.connect(lambda: self.create_phasor_select_layer())
+
+        self.save_settings_widget = SaveSettingsWidget()
+        self.save_settings_widget.filepath.textChanged.connect(lambda text : setattr(self, "settings_filepath", text))
+        self.save_settings_widget.save.clicked.connect(self.save_settings)
+        self.save_settings_widget.save_as.clicked.connect(self.save_as_settings)
+        self.save_settings_widget.open.clicked.connect(self.open_settings)
+
+        flim_receiver.new_series.connect(self.new_series)
+        flim_receiver.new_element.connect(self.new_element)
+        flim_receiver.end_series.connect(self.end_series)
+
+        self.flim_params = DEFAULT_FLIM_PARAMS
+        self.display_settings = DEFAULT_DISPLAY_SETTINGS
+        self.delta_snapshots = DEFAULT_DELTA_SNAPSHOTS
+        self.settings_filepath = DEFAULT_SETTINGS_FILEPATH
+        self.port = DEFAULT_PORT
         
         self.reset_current_step()
 
@@ -59,6 +102,126 @@ class SeriesViewer():
         self.colors = color_gen()
         
         self.create_lifetime_select_layer()
+
+    @property
+    def port(self):
+        return self._port
+    
+    @port.setter
+    def port(self, value : str | int):
+        if self.port_widget.port_line_edit.text() != str(value):
+            self.port_widget.port_line_edit.setText(str(value))
+
+        if str.isnumeric(str(value)) and int(value) > 1023 and int(value) < 65536:
+            self._port = int(value)
+            self.port_widget.set_valid()
+            flim_receiver.start_receiving(int(value))
+        else:
+            self._port = None
+            self.port_widget.set_invalid()
+            flim_receiver.stop_receiving()
+
+    @property
+    def flim_params(self):
+        return self._flim_params
+
+    @flim_params.setter
+    def flim_params(self, value : FlimParams):
+        if self._flim_params != value:
+            self._flim_params = value
+            self.update_all()
+        if self.flim_params_widget.values() != value:
+            self.flim_params_widget.setValues(value)
+
+    @property
+    def display_settings(self):
+        return self._display_settings
+
+    @display_settings.setter
+    def display_settings(self, value : DisplaySettings):
+        if self._display_settings != value:
+            self._display_settings = value
+            self.update_all()
+        if self.display_settings_widget.values() != value:
+            self.display_settings_widget.setValues(value)
+
+    @property
+    def delta_snapshots(self):
+        return self._delta_snapshots
+
+    @delta_snapshots.setter
+    def delta_snapshots(self, value : bool):
+        if self._delta_snapshots != value:
+            self._delta_snapshots = value
+            self.update_all()
+        if self.actions_widget.delta_snapshots.isChecked() != value:
+            self.actions_widget.delta_snapshots.setChecked(value)
+
+    @property
+    def settings_filepath(self):
+        return self._settings_filepath
+
+    @settings_filepath.setter
+    def settings_filepath(self, value : str):
+        self._settings_filepath = value
+        if self.save_settings_widget.filepath.text() != value:
+            self.save_settings_widget.filepath.setText(value)
+
+    @ensure_main_thread
+    def new_series(self, series_metadata : SeriesMetadata):
+        self.port_widget.disable_editing()
+        if self.flim_params == DEFAULT_FLIM_PARAMS:
+            tau_axis_size = series_metadata.shape[-1]
+            self.flim_params = FlimParams(
+                    period=self.flim_params.period,
+                    fit_start=tau_axis_size // 3,
+                    fit_end=(tau_axis_size * 2 ) // 3,
+                )
+        self.setup_sequence_viewer(series_metadata)
+    
+    def tear_down(self):
+        flim_receiver.stop_receiving()
+        try:
+            self.phasor_viewer.close()
+        except RuntimeError:
+            logging.warn(f"Failed to close phasor viewer or already closed!")
+
+    @ensure_main_thread
+    def new_element(self, element_data : ElementData):
+        self.receive_and_update(element_data)
+
+    @ensure_main_thread
+    def end_series(self):
+        self.port_widget.enable_editing()
+
+    def save_settings(self):
+        path = Path(self.settings_filepath).absolute()
+        logging.info(f"saving parameters to {path}")
+        with open(path, "w") as outfile:
+            opts_dict = {
+                "version" : SETTINGS_VERSION,
+                "delta_snapshots" : self.delta_snapshots,
+                "flim_params" : asdict(self.flim_params),
+                "display_filters" : asdict(self.display_settings)
+            }
+            json.dump(opts_dict, outfile, indent=4)
+
+    def save_as_settings(self):
+        fs = FileSelector()
+        self.settings_filepath = fs.save_file(self.settings_filepath)
+        self.save_settings()
+
+    def open_settings(self):
+        fs = FileSelector()
+        self.settings_filepath = fs.open_file(self.settings_filepath)
+        path = Path(self.settings_filepath).absolute()
+        logging.info(f"loading parameters from {path}")
+        with open(path, "r") as infile:
+            opts_dict = json.load(infile)
+            assert opts_dict["version"] == SETTINGS_VERSION
+            self.delta_snapshots = opts_dict["delta_snapshots"]
+            self.flim_params_widget = FlimParams(**opts_dict["flim_params"])
+            self.display_settings_widget = DisplaySettings(**opts_dict["display_filters"])
 
     def get_lifetime_layers(self, include_invisible=True) -> List[Layer]:
         layer_list = self.lifetime_viewer.layers
@@ -102,19 +265,6 @@ class SeriesViewer():
                         co_viewer.window.remove_dock_widget(selection.decay_plot.dock_widget)
                     except ValueError:
                         pass # already removed
-
-
-    def set_delta_snapshots(self, delta_snapshots : bool):
-        self.delta_snapshots = delta_snapshots
-        self.update_all()
-
-    def set_params(self, params : FlimParams):
-        self.params = params
-        self.update_all()
-
-    def set_filters(self, filters : DisplayFilters):
-        self.filters = filters
-        self.update_all()
 
     def get_current_step(self):
         return self.lifetime_viewer.dims.current_step[0]
@@ -334,7 +484,7 @@ class SelectionComputeTask:
             photon_count = EMPTY_PHOTON_COUNT
             tasks = None
 
-        self.params = series_viewer.params
+        self.params = series_viewer.flim_params
         if len(selection_metadata.selection.data) > 0 and selection_metadata.selection.visible:
             mask_result = selection_metadata.compute_mask(photon_count)
         else:

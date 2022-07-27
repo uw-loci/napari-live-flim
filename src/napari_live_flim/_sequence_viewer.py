@@ -54,11 +54,11 @@ class ComputeTask:
     def start(self):
         if self._sequence_viewer is not None and not self.all_started(): # dont start more than once
             photon_count = self._sequence_viewer.get_photon_count(self._step)
-            params = self._sequence_viewer.series_viewer.params
-            filters = self._sequence_viewer.series_viewer.filters
+            params = self._sequence_viewer.series_viewer.flim_params
+            display_settings = self._sequence_viewer.series_viewer.display_settings
 
             self.intensity = executor.submit(compute_intensity, photon_count)
-            self.lifetime_image = executor.submit(compute_lifetime_image, photon_count, self.intensity, params, filters)
+            self.lifetime_image = executor.submit(compute_lifetime_image, photon_count, self.intensity, params, display_settings)
             self.phasor = executor.submit(compute_phasor, photon_count, params)
             self.phasor_quadtree = executor.submit(compute_phasor_quadtree, self.phasor)
             self.phasor_image = executor.submit(compute_phasor_image, self.phasor)
@@ -188,7 +188,7 @@ def get_sliced_shape(shape : tuple, slices):
 
 # about 0.1 seconds for 256x256x256 data
 @timing
-def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[np.ndarray], params : FlimParams, filters : DisplayFilters):
+def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[np.ndarray], params : FlimParams, display_settings : DisplaySettings):
     period = params.period
     fstart = params.fit_start if params.fit_start < photon_count.shape[-1] else photon_count.shape[-1]
     fend =  params.fit_end if params.fit_end <= photon_count.shape[-1] else photon_count.shape[-1]
@@ -198,17 +198,17 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     intensity = intensity_future.result()
     invalid_indexer = np.where(
         (np.isnan(tau)) |
-        (rld.chisq > filters.max_chisq) |
-        (tau < filters.min_tau) |
-        (tau > filters.max_tau)
+        (rld.chisq > display_settings.max_chisq) |
+        (tau < display_settings.min_tau) |
+        (tau > display_settings.max_tau)
     )
     intensity[invalid_indexer] = np.nan
     tau[invalid_indexer] = np.nan
     intensity = normalize(intensity)
     np.nan_to_num(intensity, copy=False)
-    tau = normalize(tau, min_in=filters.min_tau, max_in=filters.max_tau)
+    tau = normalize(tau, min_in=display_settings.min_tau, max_in=display_settings.max_tau)
     np.nan_to_num(tau, copy=False)
-    rgb_tau = COLORMAPS[filters.colormap](tau)
+    rgb_tau = COLORMAPS[display_settings.colormap](tau)
     rgb_tau[...,:3] *= intensity[..., np.newaxis]
     return rgb_tau
 

@@ -3,7 +3,7 @@ import numpy as np
 from flimlib import TripleIntegralResult, MarquardtResult
 
 @dataclass(frozen=True)
-class DisplayFilters():
+class DisplaySettings():
     max_chisq : float
     min_tau : float
     max_tau : float
