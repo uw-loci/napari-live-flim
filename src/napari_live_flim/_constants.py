@@ -24,11 +24,11 @@ EMPTY_PHOTON_COUNT = np.zeros((1, 1, 0), dtype=np.float32)
 
 DEFUALT_LIFETIME_SELECTION = np.array([[0, 0], [0, 20], [40, 20], [40, 0]])
 DEFUALT_PHASOR_SELECTION = np.array([
-    [PHASOR_SCALE//2, PHASOR_SCALE//2], 
-    [PHASOR_SCALE//2, PHASOR_SCALE*2//3],
-    [PHASOR_SCALE*2//3, PHASOR_SCALE*2//3],
-    [PHASOR_SCALE*2//3, PHASOR_SCALE//2]
-])
+    [.5, .5], 
+    [.5, .4],
+    [.3, .4],
+    [.3, .5]
+]) * PHASOR_SCALE
 
 COLOR_DICT = {  "red":"#FF0000",
                 "green":"#00FF00",

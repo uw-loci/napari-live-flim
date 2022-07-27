@@ -5,6 +5,7 @@ import napari
 from napari.qt import QtViewer
 from napari.components.viewer_model import ViewerModel
 import vispy.color
+from skimage import data
 import numpy as np
 import colorsys
 from qtpy.QtWidgets import QMainWindow, QWidget
@@ -25,6 +26,11 @@ if __name__ == "__main__":
     
     viewer.window.add_dock_widget(co_viewer)
     viewer.window.add_dock_widget(co_viewer.dockLayerList)
+
+    viewer.add_image(data.astronaut(), scale=[-1, 1])
+    viewer.text_overlay.visible = True
+    viewer.text_overlay.text = "crungog"
+
     @magicgui(call_button="run")
     def call_button():
         print(AVAILABLE_COLORMAPS)

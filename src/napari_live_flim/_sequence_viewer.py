@@ -244,11 +244,11 @@ def compute_phasor(photon_count : np.ndarray, params : FlimParams):
     # about 0.5 sec for 256x256x256 data
     phasor = flimlib.GCI_Phasor(period, photon_count, fit_start=fstart, fit_end=fend, compute_fitted=False, compute_residuals=False, compute_chisq=False)
     #reshape to work well with mapping / creating the phasor plot. Result has shape (height, width, 2)
-    return np.round(np.dstack([(1 - phasor.v) * PHASOR_SCALE, phasor.u * PHASOR_SCALE])).astype(int)
+    return np.dstack([phasor.v, phasor.u])
 
 def compute_phasor_quadtree(phasor_future : Future[np.ndarray]):
     phasor = phasor_future.result()
-    return KDTree(phasor.reshape(-1, phasor.shape[-1]))
+    return KDTree(phasor.reshape(-1, phasor.shape[-1]) * PHASOR_SCALE)
 
 @dataclass
 class SnapshotData:

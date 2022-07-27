@@ -10,8 +10,10 @@ from typing import List
 import flimlib
 import numpy as np
 from napari import Viewer
+from napari.components.viewer_model import ViewerModel
 from napari.layers import Image, Layer, Points, Shapes
 from napari.utils.events import Event
+from napari.qt import QtViewer
 from superqt import ensure_main_thread
 from vispy.scene.visuals import Text
 
@@ -35,13 +37,28 @@ class SeriesViewer():
         self._delta_snapshots = DEFAULT_DELTA_SNAPSHOTS
         self._settings_filepath = DEFAULT_SETTINGS_FILEPATH
         self._port = DEFAULT_PORT
-        
-        self.lifetime_viewer = napari_viewer
-        self.phasor_viewer = Viewer(title="Phasor Viewer")
-        self.phasor_viewer.window.qt_viewer.dockLayerList.setVisible(False)
-        self.phasor_viewer.window.qt_viewer.dockLayerControls.setVisible(False)
+
         self.exposed_lifetime_image = None
         self.live_sequence_viewer = None
+        
+        self.lifetime_viewer = napari_viewer
+        self.qt_lifetime_viewer = napari_viewer.window.qt_viewer
+        self.phasor_viewer = ViewerModel(title="Phasor Viewer")
+        self.qt_phasor_viewer = QtViewer(self.phasor_viewer)
+        self.qt_phasor_viewer.window().setMinimumHeight(200)
+        self.phasor_dock_widget = self.lifetime_viewer.window.add_dock_widget(self.qt_phasor_viewer, area="bottom")
+        ph_ctrls = self.qt_phasor_viewer.dockLayerControls
+        ph_ctrls.name = "Phasor Layer Controls"
+        ph_ctrls.setWindowTitle("Phasor Layer Controls")
+        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.lifetime_viewer.window.qt_viewer.dockLayerControls, ph_ctrls)
+        ph_list = self.qt_phasor_viewer.dockLayerList
+        ph_list.name = "Phasor Layer List"
+        ph_list.setWindowTitle("Phasor Layer List")
+        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.lifetime_viewer.window.qt_viewer.dockLayerList, ph_list)
+        
+        self.qt_lifetime_viewer.canvas.events.mouse_press.connect(self.switch_to_lifetime_controls)
+        self.qt_phasor_viewer.canvas.events.mouse_press.connect(self.switch_to_phasor_controls)
+        self.qt_phasor_viewer.canvas.events.mouse_move.connect(self.display_phasor_mouse_pos)
         self.lifetime_viewer.layers.events.connect(self.validate_exposed_lifetime_image)
         self.lifetime_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.lifetime_viewer, self.phasor_viewer))
         self.phasor_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.phasor_viewer, self.lifetime_viewer))
@@ -84,14 +101,25 @@ class SeriesViewer():
         
         self.reset_current_step()
 
-        autoscale_viewer(self.phasor_viewer, (PHASOR_SCALE, PHASOR_SCALE))
+        #autoscale_viewer(self.phasor_viewer, (PHASOR_SCALE, PHASOR_SCALE))
         #add the phasor circle
-        phasor_circle = np.asarray([[PHASOR_SCALE, 0.5 * PHASOR_SCALE],[0.5 * PHASOR_SCALE,0.5 * PHASOR_SCALE]])
+        """
+        phasor_circle = [[PHASOR_SCALE, 0.5 * PHASOR_SCALE],[0.5 * PHASOR_SCALE,0.5 * PHASOR_SCALE]]
+        black_box = [[PHASOR_SCALE,-0.5 * PHASOR_SCALE],[PHASOR_SCALE, 1.5 * PHASOR_SCALE], [0.5 * PHASOR_SCALE, 1.5 * PHASOR_SCALE], [0.5 * PHASOR_SCALE, -0.5 * PHASOR_SCALE]]
         x_axis_line = np.asarray([[PHASOR_SCALE,0],[PHASOR_SCALE,PHASOR_SCALE]])
-        phasor_shapes_layer = self.phasor_viewer.add_shapes([phasor_circle, x_axis_line], shape_type=["ellipse","line"], face_color="",)
+        phasor_shapes_layer = self.phasor_viewer.add_shapes(phasor_circle, shape_type="ellipse", face_color="", scale=[-1, 1], opacity=1.0, edge_width=PHASOR_SCALE/200)
+        phasor_shapes_layer.add_rectangles(black_box, edge_width=0, face_color="black")
+        phasor_shapes_layer.add_lines(x_axis_line, edge_width=PHASOR_SCALE/200)
+        """
+        phasor_circle = [[0, 0.5],[0.5, 0.5]]
+        black_box = [[0, -0.5],[0, 1.5], [-1, 1.5], [-1, -0.5]]
+        x_axis_line = [[0,0], [0,1]]
+        phasor_shapes_layer = self.phasor_viewer.add_shapes(phasor_circle, shape_type="ellipse", face_color="", scale=[-PHASOR_SCALE, PHASOR_SCALE], opacity=1.0, edge_width=5/PHASOR_SCALE)
+        phasor_shapes_layer.add_rectangles(black_box, edge_width=0, face_color="black")
+        phasor_shapes_layer.add_lines(x_axis_line)
         phasor_shapes_layer.editable = False
         # empty phasor data
-        self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3)
+        self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3/PHASOR_SCALE, scale=[-PHASOR_SCALE, PHASOR_SCALE])
         self.phasor_image.editable = False
         
         # color generator used for color coordinated selections
@@ -167,6 +195,18 @@ class SeriesViewer():
         if self.save_settings_widget.filepath.text() != value:
             self.save_settings_widget.filepath.setText(value)
 
+    def switch_to_phasor_controls(self, event=None):
+        self.qt_phasor_viewer.dockLayerControls.raise_()
+        self.qt_phasor_viewer.dockLayerList.raise_()
+
+    def switch_to_lifetime_controls(self, event=None):
+        self.qt_lifetime_viewer.dockLayerControls.raise_()
+        self.qt_lifetime_viewer.dockLayerList.raise_()
+
+    def display_phasor_mouse_pos(self, event : Event):
+        self.phasor_viewer.text_overlay.visible = True
+        self.phasor_viewer.text_overlay.text = str(np.asarray(self.phasor_viewer.cursor.position) / PHASOR_SCALE)
+
     @ensure_main_thread
     def new_series(self, series_metadata : SeriesMetadata):
         self.port_widget.disable_editing()
@@ -235,7 +275,6 @@ class SeriesViewer():
         return [get_sequence_viewer(layer) for layer in self.get_lifetime_layers(include_invisible=include_invisible)]
 
     def validate_exposed_lifetime_image(self, event : Event):
-        print(self.lifetime_viewer.layers.selection)
         typ = event.type
         if typ == "reordered" or typ == "visible" or typ == "removed":
             layers = self.get_lifetime_layers(include_invisible=False)
@@ -348,11 +387,27 @@ class SeriesViewer():
         for layer in self.phasor_viewer.layers:
             show_decay_plot(layer)
 
+        try:
+            if self.phasor_dock_widget.isHidden():
+                self.phasor_dock_widget.show()
+        except RuntimeError:
+            logging.info("Phasor viewer dock widget was deleted. Attempting to restore...")
+            self.lifetime_viewer.window.add_dock_widget(self.qt_phasor_viewer, area="bottom")
+
+        self.lifetime_viewer.window.qt_viewer.dockLayerControls.show()
+        self.lifetime_viewer.window.qt_viewer.dockLayerList.show()
+        self.qt_phasor_viewer.dockLayerControls.show()
+        self.qt_phasor_viewer.dockLayerList.show()
+
     def hide_plots(self):
         for layer in self.lifetime_viewer.layers:
             hide_decay_plot(layer)
         for layer in self.phasor_viewer.layers:
             hide_decay_plot(layer)
+        try:
+            self.phasor_dock_widget.hide()
+        except RuntimeError:
+            logging.info("Phasor viewer dock widget was deleted. Unable to hide it.")
 
     def update_selections(self):
         for layer in self.lifetime_viewer.layers:
@@ -366,10 +421,10 @@ class SeriesViewer():
         color = next(self.colors)
         select_layer = viewer.add_shapes(DEFUALT_LIFETIME_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0)
         sel = co_viewer.layers.selection.copy()
-        co_selection = co_viewer.add_points(None, name="Correlation", size=1, face_color=color, edge_width=0)
+        co_selection = co_viewer.add_points(None, name="Correlation", size=1/PHASOR_SCALE, face_color=color, edge_width=0, scale=[-PHASOR_SCALE, PHASOR_SCALE])
         co_viewer.layers.selection = sel
         co_selection.editable = False
-        decay_plot = CurveFittingPlot(viewer, scatter_color=color)
+        decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
         set_selection(select_layer, LifetimeSelectionMetadata(select_layer, co_selection, decay_plot, self))
         select_layer.mouse_drag_callbacks.append(select_shape_drag)
         select_layer.events.data.connect(update_selection_callback)
@@ -384,19 +439,17 @@ class SeriesViewer():
         viewer = self.phasor_viewer
         co_viewer = self.lifetime_viewer
         color = next(self.colors)
-        select_layer = viewer.add_shapes(DEFUALT_PHASOR_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0)
+        select_layer = viewer.add_shapes(DEFUALT_PHASOR_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0, scale=[-1, 1])
         sel = co_viewer.layers.selection.copy()
         co_selection = co_viewer.add_points(None, name="Correlation", size=1, face_color=color, edge_width=0)
         co_viewer.layers.selection = sel
         co_selection.editable = False
-        decay_plot = CurveFittingPlot(viewer, scatter_color=color)
+        decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
         set_selection(select_layer, PhasorSelectionMetadata(select_layer, co_selection, decay_plot, self))
         select_layer.mouse_drag_callbacks.append(select_shape_drag)
         select_layer.events.data.connect(update_selection_callback)
         select_layer.events.visible.connect(update_selection_callback)
         select_layer.mode = "select"
-        viewer.window.qt_viewer.dockLayerList.setVisible(True)
-        viewer.window.qt_viewer.dockLayerControls.setVisible(True)
         return select_layer
 
 def compute_fits(photon_count, params : "FlimParams"):
@@ -605,8 +658,9 @@ class PhasorSelectionMetadata(SelectionMetadata):
                 points = []
                 offset=extrema[0]
                 # use of private field `_data_view` since the shapes.py `to_masks()` fails to recognize offset
+                phasor = (tasks.phasor.result(timeout=0) * PHASOR_SCALE).astype(int)
                 for point in bounded_points:
-                    bounded_phasor = tasks.phasor.result(timeout=0)[tuple(point)]
+                    bounded_phasor = phasor[tuple(point)]
                     mask_indexer = tuple(bounded_phasor - offset)
                     # kd tree found a square bounding box. some of these points might be outside of the rectangular mask
                     if mask_indexer[0] < 0 or mask_indexer[1] < 0 or mask_indexer[0] >= bounding_shape[0] or mask_indexer[1] >= bounding_shape[1]:
