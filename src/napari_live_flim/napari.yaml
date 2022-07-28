@@ -4,7 +4,7 @@ contributions:
   commands:
     - id: napari-live-flim.open
       title: FLIM Viewer
-      python_name: napari_live_flim._widget:FlimViewer
+      python_name: napari_live_flim:FlimViewer
   widgets:
     - command: napari-live-flim.open
       display_name: FLIM Viewer

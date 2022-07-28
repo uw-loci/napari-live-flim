@@ -27,8 +27,6 @@ from .plot_widget import Fig
 
 from ._flim_receiver import FlimReceiver
 
-flim_receiver = FlimReceiver() # global instance to prevent connecting to the same UDP port twice
-
 class SeriesViewer():
     def __init__(self, napari_viewer : Viewer):
 
@@ -38,6 +36,7 @@ class SeriesViewer():
         self._settings_filepath = DEFAULT_SETTINGS_FILEPATH
         self._port = DEFAULT_PORT
 
+        self.flim_receiver = FlimReceiver()
         self.exposed_lifetime_image = None
         self.live_sequence_viewer = None
         
@@ -50,11 +49,11 @@ class SeriesViewer():
         ph_ctrls = self.qt_phasor_viewer.dockLayerControls
         ph_ctrls.name = "Phasor Layer Controls"
         ph_ctrls.setWindowTitle("Phasor Layer Controls")
-        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.lifetime_viewer.window.qt_viewer.dockLayerControls, ph_ctrls)
+        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.qt_lifetime_viewer.dockLayerControls, ph_ctrls)
         ph_list = self.qt_phasor_viewer.dockLayerList
         ph_list.name = "Phasor Layer List"
         ph_list.setWindowTitle("Phasor Layer List")
-        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.lifetime_viewer.window.qt_viewer.dockLayerList, ph_list)
+        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.qt_lifetime_viewer.dockLayerList, ph_list)
         
         self.qt_lifetime_viewer.canvas.events.mouse_press.connect(self.switch_to_lifetime_controls)
         self.qt_phasor_viewer.canvas.events.mouse_press.connect(self.switch_to_phasor_controls)
@@ -89,9 +88,9 @@ class SeriesViewer():
         self.save_settings_widget.save_as.clicked.connect(self.save_as_settings)
         self.save_settings_widget.open.clicked.connect(self.open_settings)
 
-        flim_receiver.new_series.connect(self.new_series)
-        flim_receiver.new_element.connect(self.new_element)
-        flim_receiver.end_series.connect(self.end_series)
+        self.flim_receiver.new_series.connect(self.new_series)
+        self.flim_receiver.new_element.connect(self.new_element)
+        self.flim_receiver.end_series.connect(self.end_series)
 
         self.flim_params = DEFAULT_FLIM_PARAMS
         self.display_settings = DEFAULT_DISPLAY_SETTINGS
@@ -101,16 +100,7 @@ class SeriesViewer():
         
         self.reset_current_step()
 
-        #autoscale_viewer(self.phasor_viewer, (PHASOR_SCALE, PHASOR_SCALE))
         #add the phasor circle
-        """
-        phasor_circle = [[PHASOR_SCALE, 0.5 * PHASOR_SCALE],[0.5 * PHASOR_SCALE,0.5 * PHASOR_SCALE]]
-        black_box = [[PHASOR_SCALE,-0.5 * PHASOR_SCALE],[PHASOR_SCALE, 1.5 * PHASOR_SCALE], [0.5 * PHASOR_SCALE, 1.5 * PHASOR_SCALE], [0.5 * PHASOR_SCALE, -0.5 * PHASOR_SCALE]]
-        x_axis_line = np.asarray([[PHASOR_SCALE,0],[PHASOR_SCALE,PHASOR_SCALE]])
-        phasor_shapes_layer = self.phasor_viewer.add_shapes(phasor_circle, shape_type="ellipse", face_color="", scale=[-1, 1], opacity=1.0, edge_width=PHASOR_SCALE/200)
-        phasor_shapes_layer.add_rectangles(black_box, edge_width=0, face_color="black")
-        phasor_shapes_layer.add_lines(x_axis_line, edge_width=PHASOR_SCALE/200)
-        """
         phasor_circle = [[0, 0.5],[0.5, 0.5]]
         black_box = [[0, -0.5],[0, 1.5], [-1, 1.5], [-1, -0.5]]
         x_axis_line = [[0,0], [0,1]]
@@ -120,8 +110,9 @@ class SeriesViewer():
         phasor_shapes_layer.editable = False
         # empty phasor data
         self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3/PHASOR_SCALE, scale=[-PHASOR_SCALE, PHASOR_SCALE])
+        zoom_viewer(self.qt_phasor_viewer, ((0,-PHASOR_SCALE/2), (PHASOR_SCALE, PHASOR_SCALE/2)))
         self.phasor_image.editable = False
-        
+
         # color generator used for color coordinated selections
         def color_gen():
             while True:
@@ -143,11 +134,11 @@ class SeriesViewer():
         if str.isnumeric(str(value)) and int(value) > 1023 and int(value) < 65536:
             self._port = int(value)
             self.port_widget.set_valid()
-            flim_receiver.start_receiving(int(value))
+            self.flim_receiver.start_receiving(int(value))
         else:
             self._port = None
             self.port_widget.set_invalid()
-            flim_receiver.stop_receiving()
+            self.flim_receiver.stop_receiving()
 
     @property
     def flim_params(self):
@@ -196,16 +187,21 @@ class SeriesViewer():
             self.save_settings_widget.filepath.setText(value)
 
     def switch_to_phasor_controls(self, event=None):
+        self.show_layer_controls()
         self.qt_phasor_viewer.dockLayerControls.raise_()
         self.qt_phasor_viewer.dockLayerList.raise_()
 
     def switch_to_lifetime_controls(self, event=None):
+        self.show_layer_controls()
         self.qt_lifetime_viewer.dockLayerControls.raise_()
         self.qt_lifetime_viewer.dockLayerList.raise_()
 
     def display_phasor_mouse_pos(self, event : Event):
         self.phasor_viewer.text_overlay.visible = True
-        self.phasor_viewer.text_overlay.text = str(np.asarray(self.phasor_viewer.cursor.position) / PHASOR_SCALE)
+        pos = self.phasor_viewer.cursor.position # (y, x)
+        g = pos[1] / PHASOR_SCALE
+        s = - pos[0] / PHASOR_SCALE
+        self.phasor_viewer.text_overlay.text = f"g = {g}\ns = {s}"
 
     @ensure_main_thread
     def new_series(self, series_metadata : SeriesMetadata):
@@ -220,9 +216,9 @@ class SeriesViewer():
         self.setup_sequence_viewer(series_metadata)
     
     def tear_down(self):
-        flim_receiver.stop_receiving()
+        self.flim_receiver.stop_receiving()
         try:
-            self.phasor_viewer.close()
+            self.qt_phasor_viewer.close()
         except RuntimeError:
             logging.warn(f"Failed to close phasor viewer or already closed!")
 
@@ -355,15 +351,17 @@ class SeriesViewer():
         image = self.lifetime_viewer.add_image(EMPTY_RGB_IMAGE, rgb=True, name=name)
         self.lifetime_viewer.layers.selection = sel
         self.lifetime_viewer.layers.move(len(self.lifetime_viewer.layers) - 1, len(self.get_lifetime_layers()))
-        autoscale_viewer(self.lifetime_viewer, image_shape)
+        zoom_viewer(self.qt_lifetime_viewer, ((0,0), image_shape))
         self.live_sequence_viewer = SequenceViewer(image, shape, self)
         set_sequence_viewer(image, self.live_sequence_viewer)
         
         self.exposed_lifetime_image = image
 
-    # called after new data arrives
     def receive_and_update(self, element : ElementData):
-        self.live_sequence_viewer.receive_and_update(element.frame)
+        if self.live_sequence_viewer is not None:
+            self.live_sequence_viewer.receive_and_update(element.frame)
+        else:
+            logging.error("Received data before processing start series message")
 
     def snap(self):
         sv = self.live_sequence_viewer
@@ -381,6 +379,12 @@ class SeriesViewer():
     def update_selections_callback(self, done):
         self.update_selections()
 
+    def show_layer_controls(self):
+        self.qt_lifetime_viewer.dockLayerControls.show()
+        self.qt_lifetime_viewer.dockLayerList.show()
+        self.qt_phasor_viewer.dockLayerControls.show()
+        self.qt_phasor_viewer.dockLayerList.show()
+
     def show_plots(self):
         for layer in self.lifetime_viewer.layers:
             show_decay_plot(layer)
@@ -394,10 +398,7 @@ class SeriesViewer():
             logging.info("Phasor viewer dock widget was deleted. Attempting to restore...")
             self.lifetime_viewer.window.add_dock_widget(self.qt_phasor_viewer, area="bottom")
 
-        self.lifetime_viewer.window.qt_viewer.dockLayerControls.show()
-        self.lifetime_viewer.window.qt_viewer.dockLayerList.show()
-        self.qt_phasor_viewer.dockLayerControls.show()
-        self.qt_phasor_viewer.dockLayerList.show()
+        self.show_layer_controls()
 
     def hide_plots(self):
         for layer in self.lifetime_viewer.layers:
@@ -430,8 +431,6 @@ class SeriesViewer():
         select_layer.events.data.connect(update_selection_callback)
         select_layer.events.visible.connect(update_selection_callback)
         select_layer.mode = "select"
-        viewer.window.qt_viewer.dockLayerList.setVisible(True)
-        viewer.window.qt_viewer.dockLayerControls.setVisible(True)
         return select_layer
 
     # TODO most of this code is duplicate of above method
@@ -461,9 +460,9 @@ def compute_fits(photon_count, params : "FlimParams"):
     lm = flimlib.GCI_marquardt_fitting_engine(period, photon_count, param_in, fit_start=fstart, fit_end=fend, compute_residuals=False, compute_covar=False, compute_alpha=False, compute_erraxes=False)
     return rld, lm
 
-def autoscale_viewer(viewer : Viewer, shape):
-    state = {"rect": ((0, 0), shape)}
-    viewer.window.qt_viewer.view.camera.set_state(state)
+def zoom_viewer(viewer : QtViewer, bounds):
+    state = {"rect": bounds}
+    viewer.view.camera.set_state(state)
 
 class CurveFittingPlot():
     #TODO add transform into log scale

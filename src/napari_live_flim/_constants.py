@@ -5,7 +5,7 @@ from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.cm import get_cmap
 from ._dataclasses import *
 
-SETTINGS_VERSION = 1
+SETTINGS_VERSION = 0
 MAX_VALUE = 1000000 # large number used as max value for certain user inputs
 
 FONT_SIZE = 10

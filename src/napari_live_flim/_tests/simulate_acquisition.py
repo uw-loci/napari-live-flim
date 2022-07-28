@@ -12,7 +12,6 @@ from napari_live_flim.data_generator import data_generator, SHAPE
 
 logging.basicConfig(level=logging.INFO)
 
-PORT = 5555
 series_no = -1
 
 @thread_worker
@@ -46,6 +45,5 @@ if __name__ == "__main__":
     viewer = napari.Viewer()
     flim_viewer = FlimViewer(viewer)
     viewer.window.add_dock_widget(flim_viewer)
-    flim_viewer.series_viewer.port_widget.port_line_edit.setText(str(PORT))
     create_send_widget(viewer, flim_viewer)
     napari.run()
