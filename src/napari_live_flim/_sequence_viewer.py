@@ -247,8 +247,11 @@ def compute_phasor(photon_count : np.ndarray, params : FlimParams):
     return np.dstack([phasor.v, phasor.u])
 
 def compute_phasor_quadtree(phasor_future : Future[np.ndarray]):
-    phasor = phasor_future.result()
-    return KDTree(phasor.reshape(-1, phasor.shape[-1]) * PHASOR_SCALE)
+    phasor = phasor_future.result() * PHASOR_SCALE
+    # workaround that fixes https://github.com/scipy/scipy/issues/14527
+    np.nan_to_num(phasor, copy=False, nan=np.inf)
+    quadtree = KDTree(phasor.reshape(-1, phasor.shape[-1]))
+    return quadtree
 
 @dataclass
 class SnapshotData:
