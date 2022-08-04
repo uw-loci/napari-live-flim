@@ -66,7 +66,7 @@ class SeriesViewer():
         self.lifetime_viewer.grid.events.enabled.connect(self.update_displays)
 
         self.port_widget = PortSelection()
-        self.port_widget.changed.connect(lambda p : setattr(self, "port", p))
+        self.port_widget.port_line_edit.textChanged.connect(lambda p : setattr(self, "port", p))
 
         self.flim_params_widget = FlimParamsWidget()
         self.flim_params_widget.changed.connect(lambda fp : setattr(self, "flim_params", fp))

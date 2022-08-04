@@ -28,8 +28,6 @@ from ._constants import *
 from ._dataclasses import *
 
 class PortSelection(QObject):
-    
-    changed = Signal(int)
 
     def __init__(self) -> None:
         """
