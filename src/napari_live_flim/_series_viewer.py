@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import inspect
 import copy
 import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict
 from typing import List
+
+from napari.utils._proxies import PublicOnlyProxy
 
 import flimlib
 import numpy as np
@@ -41,19 +44,36 @@ class SeriesViewer():
         self.live_sequence_viewer = None
         
         self.lifetime_viewer = napari_viewer
+        self.qt_main_window = napari_viewer.window._qt_window
         self.qt_lifetime_viewer = napari_viewer.window.qt_viewer
         self.phasor_viewer = ViewerModel(title="Phasor Viewer")
         self.qt_phasor_viewer = QtViewer(self.phasor_viewer)
         self.qt_phasor_viewer.window().setMinimumHeight(200)
         self.phasor_dock_widget = self.lifetime_viewer.window.add_dock_widget(self.qt_phasor_viewer, area="bottom")
+
+        #add the phasor circle
+        phasor_circle = [[0, 0.5],[0.5, 0.5]]
+        black_box = [[0, -0.5],[0, 1.5], [-1, 1.5], [-1, -0.5]]
+        x_axis_line = [[0,0], [0,1]]
+        phasor_shapes_layer = self.phasor_viewer.add_shapes(phasor_circle, shape_type="ellipse", face_color="", scale=[-PHASOR_SCALE, PHASOR_SCALE], opacity=1.0, edge_width=5/PHASOR_SCALE)
+        phasor_shapes_layer.add_rectangles(black_box, edge_width=0, face_color="black")
+        phasor_shapes_layer.add_lines(x_axis_line)
+        phasor_shapes_layer.editable = False
+        # empty phasor data
+        self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3/PHASOR_SCALE, scale=[-PHASOR_SCALE, PHASOR_SCALE])
+        zoom_viewer(self.qt_phasor_viewer, ((0,-PHASOR_SCALE/2), (PHASOR_SCALE, PHASOR_SCALE/2)))
+        self.phasor_image.editable = False
+
         ph_ctrls = self.qt_phasor_viewer.dockLayerControls
         ph_ctrls.name = "Phasor Layer Controls"
         ph_ctrls.setWindowTitle("Phasor Layer Controls")
-        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.qt_lifetime_viewer.dockLayerControls, ph_ctrls)
+        lt_ctrls = inspect.unwrap(self.qt_lifetime_viewer.dockLayerControls)
+        self.qt_main_window.tabifyDockWidget(lt_ctrls, ph_ctrls)
         ph_list = self.qt_phasor_viewer.dockLayerList
         ph_list.name = "Phasor Layer List"
         ph_list.setWindowTitle("Phasor Layer List")
-        self.lifetime_viewer.window._qt_window.tabifyDockWidget(self.qt_lifetime_viewer.dockLayerList, ph_list)
+        lt_list = inspect.unwrap(self.qt_lifetime_viewer.dockLayerList)
+        self.qt_main_window.tabifyDockWidget(lt_list, ph_list)
         
         self.qt_lifetime_viewer.canvas.events.mouse_press.connect(self.switch_to_lifetime_controls)
         self.qt_phasor_viewer.canvas.events.mouse_press.connect(self.switch_to_phasor_controls)
@@ -100,19 +120,6 @@ class SeriesViewer():
         
         self.reset_current_step()
 
-        #add the phasor circle
-        phasor_circle = [[0, 0.5],[0.5, 0.5]]
-        black_box = [[0, -0.5],[0, 1.5], [-1, 1.5], [-1, -0.5]]
-        x_axis_line = [[0,0], [0,1]]
-        phasor_shapes_layer = self.phasor_viewer.add_shapes(phasor_circle, shape_type="ellipse", face_color="", scale=[-PHASOR_SCALE, PHASOR_SCALE], opacity=1.0, edge_width=5/PHASOR_SCALE)
-        phasor_shapes_layer.add_rectangles(black_box, edge_width=0, face_color="black")
-        phasor_shapes_layer.add_lines(x_axis_line)
-        phasor_shapes_layer.editable = False
-        # empty phasor data
-        self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3/PHASOR_SCALE, scale=[-PHASOR_SCALE, PHASOR_SCALE])
-        zoom_viewer(self.qt_phasor_viewer, ((0,-PHASOR_SCALE/2), (PHASOR_SCALE, PHASOR_SCALE/2)))
-        self.phasor_image.editable = False
-
         # color generator used for color coordinated selections
         def color_gen():
             while True:
@@ -130,15 +137,15 @@ class SeriesViewer():
     def port(self, value : str | int):
         if self.port_widget.port_line_edit.text() != str(value):
             self.port_widget.port_line_edit.setText(str(value))
-
-        if str.isnumeric(str(value)) and int(value) > 1023 and int(value) < 65536:
-            self._port = int(value)
-            self.port_widget.set_valid()
-            self.flim_receiver.start_receiving(int(value))
-        else:
-            self._port = None
-            self.port_widget.set_invalid()
-            self.flim_receiver.stop_receiving()
+        if self._port != int(value):
+            if str.isnumeric(str(value)) and int(value) > 1023 and int(value) < 65536:
+                self._port = int(value)
+                self.port_widget.set_valid()
+                self.flim_receiver.start_receiving(int(value))
+            else:
+                self._port = None
+                self.port_widget.set_invalid()
+                self.flim_receiver.stop_receiving()
 
     @property
     def flim_params(self):
