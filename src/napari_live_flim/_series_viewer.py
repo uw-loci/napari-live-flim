@@ -33,11 +33,11 @@ from ._flim_receiver import FlimReceiver
 class SeriesViewer():
     def __init__(self, napari_viewer : Viewer):
 
-        self._flim_params = DEFAULT_FLIM_PARAMS
-        self._display_settings = DEFAULT_DISPLAY_SETTINGS
-        self._delta_snapshots = DEFAULT_DELTA_SNAPSHOTS
-        self._settings_filepath = DEFAULT_SETTINGS_FILEPATH
-        self._port = DEFAULT_PORT
+        self._flim_params = None
+        self._display_settings = None
+        self._delta_snapshots = None
+        self._settings_filepath = None
+        self._port = None
 
         self.flim_receiver = FlimReceiver()
         self.exposed_lifetime_image = None
@@ -223,11 +223,17 @@ class SeriesViewer():
         self.setup_sequence_viewer(series_metadata)
     
     def tear_down(self):
+        """
+        Stop the `FlimReceiver` and `__del__` references to Qt objects.
+        This step is neccessary for tests that create instances of this class
+        """
         self.flim_receiver.stop_receiving()
         try:
-            self.qt_phasor_viewer.close()
-        except RuntimeError:
-            logging.warn(f"Failed to close phasor viewer or already closed!")
+            del self.qt_lifetime_viewer
+            del self.qt_phasor_viewer
+            del self.qt_main_window
+        except NameError:
+            logging.error("Failed to tear down series viewer or already was")
 
     @ensure_main_thread
     def new_element(self, element_data : ElementData):

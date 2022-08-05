@@ -309,7 +309,7 @@ class SequenceViewer:
     
     @ensure_main_thread
     def compute_done_callback(self, done):
-        self.series_viewer.update_displays()
+        self.series_viewer.update_displays() # should this be an event? if so, remove this class' reference to the series viewer
         for i in range(len(self.snapshots)):
             self.validate_tasks(i)
         self.swap_lifetime_proxy_array()

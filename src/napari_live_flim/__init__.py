@@ -1,6 +1,5 @@
 from ._series_viewer import SeriesViewer
 from napari import Viewer
-from PyQt5 import QtGui
 from qtpy import QtCore
 from qtpy.QtWidgets import QWidget, QFormLayout, QApplication
 
@@ -19,7 +18,6 @@ class FlimViewer(QWidget):
             self.series_viewer = FlimViewer.instance().series_viewer
         else:
             self.series_viewer = SeriesViewer(napari_viewer)
-            self.destroyed.connect(self.series_viewer.tear_down)
 
         self.layout = QFormLayout()
         self.setLayout(self.layout)
@@ -35,11 +33,3 @@ class FlimViewer(QWidget):
     def instance(cls):
         # return current/last widget instance (or None).
         return cls._instance
-
-    def closeEvent(self, a0: QtGui.QCloseEvent) -> None:
-        super().closeEvent(a0)
-        print(type(a0))
-
-    def hideEvent(self, a0: QtGui.QHideEvent) -> None:
-        super().hideEvent(a0)
-        print(type(a0))
