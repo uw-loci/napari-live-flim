@@ -3,13 +3,16 @@ from napari import Viewer
 from qtpy import QtCore
 from qtpy.QtWidgets import QWidget, QFormLayout, QApplication
 
-# https://forum.image.sc/t/multiple-viewer-in-one-napari-window-example/69627/7?u=facetorched
-# remove this when the fix is added to napari
-QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
-
 __version__ = "0.0.1"
 
 class FlimViewer(QWidget):
+    """
+    A QWidget that encapsulates the napari plugin
+
+    In order to safely run this plugin, Napari should be run as shown here:
+    https://forum.image.sc/t/multiple-viewer-in-one-napari-window-example/69627/7?u=facetorched
+    """
+
     _instance = None
     # QWidget.__init__ can optionally request the napari viewer instance
     def __init__(self, napari_viewer : Viewer):
