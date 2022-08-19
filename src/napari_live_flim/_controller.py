@@ -382,11 +382,12 @@ class Controller():
         name = str(series_metadata.series_no) + "-" + str(series_metadata.port)
         sel = self.lifetime_viewer.layers.selection.copy()
         image = self.lifetime_viewer.add_image(EMPTY_RGB_IMAGE, rgb=True, name=name)
-        self.lifetime_viewer.layers.selection = sel # TODO test if this works
+        self.lifetime_viewer.layers.selection = sel
         # Move new lifetime image to the end of the current lifetime layers
         self.lifetime_viewer.layers.move(len(self.lifetime_viewer.layers) - 1, len(lifetime_layers))
         zoom_viewer(self.qt_lifetime_viewer, ((0,0), image_shape))
         self.live_series_viewer = SeriesViewer(image, shape, self.get_settings())
+        self.live_series_viewer.compute_done.connect(self.update_displays)
         set_series_viewer(image, self.live_series_viewer)
         
         self.exposed_lifetime_image = image
