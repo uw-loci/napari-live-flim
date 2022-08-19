@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import numpy as np
+from dataclasses_json import dataclass_json
 from flimlib import TripleIntegralResult, MarquardtResult
 
 @dataclass(frozen=True)
@@ -14,6 +15,13 @@ class FlimParams():
     period : float
     fit_start : int
     fit_end : int
+
+@dataclass_json
+@dataclass(frozen=True)
+class Settings():
+    flim_params : FlimParams
+    display_settings : DisplaySettings
+    delta_snapshots : bool
 
 @dataclass(frozen=True)
 class SelectionResult:

@@ -1,7 +1,5 @@
 import sys
 
-from concurrent.futures import ThreadPoolExecutor
-
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.cm import ScalarMappable
@@ -22,10 +20,7 @@ from qtpy.QtWidgets import (
     QComboBox,
 )
 
-executor = ThreadPoolExecutor()
-
 from ._constants import *
-from ._dataclasses import *
 
 class PortSelection(QObject):
 

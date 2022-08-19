@@ -1,11 +1,14 @@
 import numpy as np
-import colorsys
 from pathlib import Path
 from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.cm import get_cmap
-from ._dataclasses import *
+from ._dataclasses import FlimParams, DisplaySettings
+from concurrent.futures import ThreadPoolExecutor
+
+EXECUTOR = ThreadPoolExecutor()
 
 SETTINGS_VERSION = 0
+
 MAX_VALUE = 1000000 # large number used as max value for certain user inputs
 
 FONT_SIZE = 10
@@ -29,6 +32,10 @@ DEFUALT_PHASOR_SELECTION = np.array([
     [.3, .4],
     [.3, .5]
 ]) * PHASOR_SCALE
+
+# constant dictionary keys
+KEY_SERIES_VIEWER = "series_viewer"
+KEY_SELECTION = "selection"
 
 COLOR_DICT = {  "red":"#FF0000",
                 "green":"#00FF00",

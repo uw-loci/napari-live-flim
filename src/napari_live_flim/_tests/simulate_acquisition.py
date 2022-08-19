@@ -3,16 +3,15 @@
 
 import napari
 from napari_live_flim import FlimViewer
-from napari_live_flim._dataclasses import *
 import time
 import logging
 from magicgui import magicgui
 from napari.qt.threading import thread_worker
 from napari_live_flim.data_generator import data_generator, SHAPE
 from napari_live_flim._constants import *
-import sys
-
+from napari_live_flim._dataclasses import *
 from napari_live_flim._flim_receiver import SeriesSender
+from qtpy import QtWidgets, QtCore
 
 logging.basicConfig(level=logging.INFO)
 
@@ -74,6 +73,7 @@ def send_series_udp(port, frames, interval):
     sender.end()
 
 if __name__ == "__main__":
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
     viewer = napari.Viewer()
     flim_viewer = FlimViewer(viewer)
     viewer.window.add_dock_widget(flim_viewer)

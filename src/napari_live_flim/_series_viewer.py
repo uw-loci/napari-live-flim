@@ -1,567 +1,75 @@
-from __future__ import annotations
-
-import inspect
-import copy
-import json
-import logging
-from abc import ABC, abstractmethod
-from dataclasses import asdict
-from typing import List
-
-from napari.utils._proxies import PublicOnlyProxy
+import time
+from concurrent.futures import Future
+from dataclasses import dataclass
+from functools import wraps
+from time import time
+from typing import TYPE_CHECKING, List
 
 import flimlib
+import logging
 import numpy as np
-from napari import Viewer
-from napari.components.viewer_model import ViewerModel
-from napari.layers import Image, Layer, Points, Shapes
-from napari.utils.events import Event
-from napari.qt import QtViewer
+from napari.layers import Image
+from qtpy.QtCore import QObject, Signal
+
+from scipy.spatial import KDTree
 from superqt import ensure_main_thread
-from vispy.scene.visuals import Text
+
+if TYPE_CHECKING:
+    from ._controller import Controller
 
 from ._constants import *
 from ._dataclasses import *
-from ._sequence_viewer import ComputeTask, SequenceViewer
-from ._widget import *
-from ._widget import executor
 from .gather_futures import gather_futures
-from .plot_widget import Fig
-
-from ._flim_receiver import FlimReceiver
-
-class SeriesViewer():
-    def __init__(self, napari_viewer : Viewer):
-
-        self._flim_params = None
-        self._display_settings = None
-        self._delta_snapshots = None
-        self._settings_filepath = None
-        self._port = None
-
-        self.flim_receiver = FlimReceiver()
-        self.exposed_lifetime_image = None
-        self.live_sequence_viewer = None
-        
-        self.lifetime_viewer = napari_viewer
-        self.qt_main_window = napari_viewer.window._qt_window
-        self.qt_lifetime_viewer = napari_viewer.window.qt_viewer
-        self.phasor_viewer = ViewerModel(title="Phasor Viewer")
-        self.qt_phasor_viewer = QtViewer(self.phasor_viewer)
-        self.qt_phasor_viewer.window().setMinimumHeight(200)
-        self.phasor_dock_widget = self.lifetime_viewer.window.add_dock_widget(self.qt_phasor_viewer, area="bottom")
-
-        #add the phasor circle
-        phasor_circle = [[0, 0.5],[0.5, 0.5]]
-        black_box = [[0, -0.5],[0, 1.5], [-1, 1.5], [-1, -0.5]]
-        x_axis_line = [[0,0], [0,1]]
-        phasor_shapes_layer = self.phasor_viewer.add_shapes(phasor_circle, shape_type="ellipse", face_color="", scale=[-PHASOR_SCALE, PHASOR_SCALE], opacity=1.0, edge_width=5/PHASOR_SCALE)
-        phasor_shapes_layer.add_rectangles(black_box, edge_width=0, face_color="black")
-        phasor_shapes_layer.add_lines(x_axis_line)
-        phasor_shapes_layer.editable = False
-        # empty phasor data
-        self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3/PHASOR_SCALE, scale=[-PHASOR_SCALE, PHASOR_SCALE])
-        zoom_viewer(self.qt_phasor_viewer, ((0,-PHASOR_SCALE/2), (PHASOR_SCALE, PHASOR_SCALE/2)))
-        self.phasor_image.editable = False
-
-        ph_ctrls = self.qt_phasor_viewer.dockLayerControls
-        ph_ctrls.name = "Phasor Layer Controls"
-        ph_ctrls.setWindowTitle("Phasor Layer Controls")
-        lt_ctrls = inspect.unwrap(self.qt_lifetime_viewer.dockLayerControls)
-        self.qt_main_window.tabifyDockWidget(lt_ctrls, ph_ctrls)
-        ph_list = self.qt_phasor_viewer.dockLayerList
-        ph_list.name = "Phasor Layer List"
-        ph_list.setWindowTitle("Phasor Layer List")
-        lt_list = inspect.unwrap(self.qt_lifetime_viewer.dockLayerList)
-        self.qt_main_window.tabifyDockWidget(lt_list, ph_list)
-        
-        self.qt_lifetime_viewer.canvas.events.mouse_press.connect(self.switch_to_lifetime_controls)
-        self.qt_phasor_viewer.canvas.events.mouse_press.connect(self.switch_to_phasor_controls)
-        self.qt_phasor_viewer.canvas.events.mouse_move.connect(self.display_phasor_mouse_pos)
-        self.lifetime_viewer.layers.events.connect(self.validate_exposed_lifetime_image)
-        self.lifetime_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.lifetime_viewer, self.phasor_viewer))
-        self.phasor_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.phasor_viewer, self.lifetime_viewer))
-        self.lifetime_viewer.dims.events.current_step.connect(self.update_displays)
-        self.lifetime_viewer.dims.events.order.connect(self.update_displays)
-        self.lifetime_viewer.grid.events.enabled.connect(self.update_displays)
-
-        self.port_widget = PortSelection()
-        self.port_widget.port_line_edit.textChanged.connect(lambda p : setattr(self, "port", p))
-
-        self.flim_params_widget = FlimParamsWidget()
-        self.flim_params_widget.changed.connect(lambda fp : setattr(self, "flim_params", fp))
-
-        self.display_settings_widget = DisplaySettingsWidget()
-        self.display_settings_widget.changed.connect(lambda ds : setattr(self, "display_settings", ds))
-
-        self.actions_widget = ActionsWidget()
-        self.actions_widget.snap_button.clicked.connect(lambda: self.snap())
-        self.actions_widget.delta_snapshots.toggled.connect(lambda ds : setattr(self, "delta_snapshots", ds))
-        self.actions_widget.hide_plots_button.clicked.connect(lambda: self.hide_plots())
-        self.actions_widget.show_plots_button.clicked.connect(lambda: self.show_plots())
-        self.actions_widget.new_lifetime_selection_button.clicked.connect(lambda: self.create_lifetime_select_layer())
-        self.actions_widget.new_phasor_selection_button.clicked.connect(lambda: self.create_phasor_select_layer())
-
-        self.save_settings_widget = SaveSettingsWidget()
-        self.save_settings_widget.filepath.textChanged.connect(lambda text : setattr(self, "settings_filepath", text))
-        self.save_settings_widget.save.clicked.connect(self.save_settings)
-        self.save_settings_widget.save_as.clicked.connect(self.save_as_settings)
-        self.save_settings_widget.open.clicked.connect(self.open_settings)
-
-        self.flim_receiver.new_series.connect(self.new_series)
-        self.flim_receiver.new_element.connect(self.new_element)
-        self.flim_receiver.end_series.connect(self.end_series)
-
-        self.flim_params = DEFAULT_FLIM_PARAMS
-        self.display_settings = DEFAULT_DISPLAY_SETTINGS
-        self.delta_snapshots = DEFAULT_DELTA_SNAPSHOTS
-        self.settings_filepath = DEFAULT_SETTINGS_FILEPATH
-        self.port = DEFAULT_PORT
-        
-        self.reset_current_step()
-
-        # color generator used for color coordinated selections
-        def color_gen():
-            while True:
-                for i in COLOR_DICT.keys():
-                    yield COLOR_DICT[i]
-        self.colors = color_gen()
-        
-        self.create_lifetime_select_layer()
-
-    @property
-    def port(self):
-        return self._port
-    
-    @port.setter
-    def port(self, value : str | int):
-        if self.port_widget.port_line_edit.text() != str(value):
-            self.port_widget.port_line_edit.setText(str(value))
-        if self._port != int(value):
-            if str.isnumeric(str(value)) and int(value) > 1023 and int(value) < 65536:
-                self._port = int(value)
-                self.port_widget.set_valid()
-                self.flim_receiver.start_receiving(int(value))
-            else:
-                self._port = None
-                self.port_widget.set_invalid()
-                self.flim_receiver.stop_receiving()
-
-    @property
-    def flim_params(self):
-        return self._flim_params
-
-    @flim_params.setter
-    def flim_params(self, value : FlimParams):
-        if self._flim_params != value:
-            self._flim_params = value
-            self.update_all()
-        if self.flim_params_widget.values() != value:
-            self.flim_params_widget.setValues(value)
-
-    @property
-    def display_settings(self):
-        return self._display_settings
-
-    @display_settings.setter
-    def display_settings(self, value : DisplaySettings):
-        if self._display_settings != value:
-            self._display_settings = value
-            self.update_all()
-        if self.display_settings_widget.values() != value:
-            self.display_settings_widget.setValues(value)
-
-    @property
-    def delta_snapshots(self):
-        return self._delta_snapshots
-
-    @delta_snapshots.setter
-    def delta_snapshots(self, value : bool):
-        if self._delta_snapshots != value:
-            self._delta_snapshots = value
-            self.update_all()
-        if self.actions_widget.delta_snapshots.isChecked() != value:
-            self.actions_widget.delta_snapshots.setChecked(value)
-
-    @property
-    def settings_filepath(self):
-        return self._settings_filepath
-
-    @settings_filepath.setter
-    def settings_filepath(self, value : str):
-        self._settings_filepath = value
-        if self.save_settings_widget.filepath.text() != value:
-            self.save_settings_widget.filepath.setText(value)
-
-    def switch_to_phasor_controls(self, event=None):
-        self.show_layer_controls()
-        self.qt_phasor_viewer.dockLayerControls.raise_()
-        self.qt_phasor_viewer.dockLayerList.raise_()
-
-    def switch_to_lifetime_controls(self, event=None):
-        self.show_layer_controls()
-        self.qt_lifetime_viewer.dockLayerControls.raise_()
-        self.qt_lifetime_viewer.dockLayerList.raise_()
-
-    def display_phasor_mouse_pos(self, event : Event):
-        self.phasor_viewer.text_overlay.visible = True
-        pos = self.phasor_viewer.cursor.position # (y, x)
-        g = pos[1] / PHASOR_SCALE
-        s = - pos[0] / PHASOR_SCALE
-        self.phasor_viewer.text_overlay.text = f"g = {g}\ns = {s}"
-
-    @ensure_main_thread
-    def new_series(self, series_metadata : SeriesMetadata):
-        self.port_widget.disable_editing()
-        if self.flim_params == DEFAULT_FLIM_PARAMS:
-            tau_axis_size = series_metadata.shape[-1]
-            self.flim_params = FlimParams(
-                    period=self.flim_params.period,
-                    fit_start=tau_axis_size // 3,
-                    fit_end=(tau_axis_size * 2 ) // 3,
-                )
-        self.setup_sequence_viewer(series_metadata)
-    
-    def tear_down(self):
-        """
-        Stop the `FlimReceiver` and `__del__` references to Qt objects.
-        This step is neccessary for tests that create instances of this class
-        """
-        self.flim_receiver.stop_receiving()
-        try:
-            del self.qt_lifetime_viewer
-            del self.qt_phasor_viewer
-            del self.qt_main_window
-        except NameError:
-            logging.error("Failed to tear down series viewer or already was")
-
-    @ensure_main_thread
-    def new_element(self, element_data : ElementData):
-        self.receive_and_update(element_data)
-
-    @ensure_main_thread
-    def end_series(self):
-        self.port_widget.enable_editing()
-
-    def save_settings(self):
-        path = Path(self.settings_filepath).absolute()
-        logging.info(f"saving parameters to {path}")
-        with open(path, "w") as outfile:
-            opts_dict = {
-                "version" : SETTINGS_VERSION,
-                "delta_snapshots" : self.delta_snapshots,
-                "flim_params" : asdict(self.flim_params),
-                "display_filters" : asdict(self.display_settings)
-            }
-            json.dump(opts_dict, outfile, indent=4)
-
-    def save_as_settings(self):
-        fs = FileSelector()
-        self.settings_filepath = fs.save_file(self.settings_filepath)
-        self.save_settings()
-
-    def open_settings(self):
-        fs = FileSelector()
-        self.settings_filepath = fs.open_file(self.settings_filepath)
-        path = Path(self.settings_filepath).absolute()
-        logging.info(f"loading parameters from {path}")
-        with open(path, "r") as infile:
-            opts_dict = json.load(infile)
-            assert opts_dict["version"] == SETTINGS_VERSION
-            self.delta_snapshots = opts_dict["delta_snapshots"]
-            self.flim_params_widget = FlimParams(**opts_dict["flim_params"])
-            self.display_settings_widget = DisplaySettings(**opts_dict["display_filters"])
-
-    def get_lifetime_layers(self, include_invisible=True) -> List[Layer]:
-        layer_list = self.lifetime_viewer.layers
-        ret = []
-        for layer in layer_list:
-            if (include_invisible or layer.visible) and get_sequence_viewer(layer) is not None:
-                ret += [layer]
-        return ret
-
-    def get_sequence_viewers(self, include_invisible=True) -> List[SequenceViewer]:
-        return [get_sequence_viewer(layer) for layer in self.get_lifetime_layers(include_invisible=include_invisible)]
-
-    def validate_exposed_lifetime_image(self, event : Event):
-        typ = event.type
-        if typ == "reordered" or typ == "visible" or typ == "removed":
-            layers = self.get_lifetime_layers(include_invisible=False)
-            if len(layers) == 1:
-                if self.get_exposed_sequence_viewer() is not get_sequence_viewer(layers[-1]):
-                    self.exposed_lifetime_image = layers[-1]
-                    self.update_displays()
-            else:
-                if self.exposed_lifetime_image is not None:
-                    self.exposed_lifetime_image = None
-                    self.update_displays()
-
-    def cleanup_removed_selection(self, layer : Layer, viewer : Viewer, co_viewer : Viewer):
-        selection = get_selection(layer)
-        if selection is not None:
-            try:
-                co_viewer.layers.remove(selection.co_selection)
-                viewer.window.remove_dock_widget(selection.decay_plot.dock_widget)
-            except ValueError:
-                pass # already removed
-        else:
-            for co_layer in co_viewer.layers:
-                selection = get_selection(co_layer)
-                if selection is not None and selection.co_selection is layer:
-                    try:
-                        co_viewer.layers.remove(selection.selection)
-                        co_viewer.window.remove_dock_widget(selection.decay_plot.dock_widget)
-                    except ValueError:
-                        pass # already removed
-
-    def get_current_step(self):
-        return self.lifetime_viewer.dims.current_step[0]
-
-    def reset_current_step(self):
-        self.lifetime_viewer.dims.set_current_step(0,0)
-    
-    def should_show_displays(self):
-        if 0 in self.lifetime_viewer.dims.displayed:
-            return False
-        if self.lifetime_viewer.grid.enabled:
-            return False
-        return True
-
-    def update_displays(self):
-        sequence_viewer = self.get_exposed_sequence_viewer()
-        if self.should_show_displays() and sequence_viewer is not None:
-            step = self.get_current_step()
-            tasks = sequence_viewer.get_task(step)
-            if tasks is not None and tasks.all_done():
-                set_points(self.phasor_image, tasks.phasor_image.result(timeout=0))
-                try:
-                    self.phasor_image.face_color = tasks.phasor_face_color.result(timeout=0)
-                except RuntimeError as e:
-                    logging.error(f"Attempting to set phasor face color resulted in {e}")
-                self.phasor_image.selected_data = {}
-        else:
-            set_points(self.phasor_image, None)
-
-        self.update_selections()
-
-    def get_exposed_sequence_viewer(self) -> SequenceViewer | None:
-        return get_sequence_viewer(self.exposed_lifetime_image) if self.exposed_lifetime_image is not None else None
-
-    def setup_sequence_viewer(self, series_metadata : SeriesMetadata):
-        """
-        setup occurs after receiving the new_series signal
-        At this point we know what shape the incoming data will be
-        """
-        shape = series_metadata.shape
-        image_shape = shape[-3:-1]
-        
-        for layer in self.get_lifetime_layers():
-                layer.visible = False
-        self.lifetime_viewer.dims.set_current_step(0, 0)
-
-        name = str(series_metadata.series_no) + "-" + str(series_metadata.port)
-        sel = self.lifetime_viewer.layers.selection.copy()
-        image = self.lifetime_viewer.add_image(EMPTY_RGB_IMAGE, rgb=True, name=name)
-        self.lifetime_viewer.layers.selection = sel
-        self.lifetime_viewer.layers.move(len(self.lifetime_viewer.layers) - 1, len(self.get_lifetime_layers()))
-        zoom_viewer(self.qt_lifetime_viewer, ((0,0), image_shape))
-        self.live_sequence_viewer = SequenceViewer(image, shape, self)
-        set_sequence_viewer(image, self.live_sequence_viewer)
-        
-        self.exposed_lifetime_image = image
-
-    def receive_and_update(self, element : ElementData):
-        if self.live_sequence_viewer is not None:
-            self.live_sequence_viewer.receive_and_update(element.frame)
-        else:
-            logging.error("Received data before processing start series message")
-
-    def snap(self):
-        sv = self.live_sequence_viewer
-        if sv is not None:
-            scroll_next = sv.live_index() == self.get_current_step()
-            sv.snap()
-            if scroll_next:
-                self.lifetime_viewer.dims.set_current_step(0, sv.live_index())
-
-    def update_all(self):
-        for sequence_viewer in self.get_sequence_viewers():
-            sequence_viewer.update()
-        
-    @ensure_main_thread
-    def update_selections_callback(self, done):
-        self.update_selections()
-
-    def show_layer_controls(self):
-        self.qt_lifetime_viewer.dockLayerControls.show()
-        self.qt_lifetime_viewer.dockLayerList.show()
-        self.qt_phasor_viewer.dockLayerControls.show()
-        self.qt_phasor_viewer.dockLayerList.show()
-
-    def show_plots(self):
-        for layer in self.lifetime_viewer.layers:
-            show_decay_plot(layer)
-        for layer in self.phasor_viewer.layers:
-            show_decay_plot(layer)
-
-        try:
-            if self.phasor_dock_widget.isHidden():
-                self.phasor_dock_widget.show()
-        except RuntimeError:
-            logging.info("Phasor viewer dock widget was deleted. Attempting to restore...")
-            self.lifetime_viewer.window.add_dock_widget(self.qt_phasor_viewer, area="bottom")
-
-        self.show_layer_controls()
-
-    def hide_plots(self):
-        for layer in self.lifetime_viewer.layers:
-            hide_decay_plot(layer)
-        for layer in self.phasor_viewer.layers:
-            hide_decay_plot(layer)
-        try:
-            self.phasor_dock_widget.hide()
-        except RuntimeError:
-            logging.info("Phasor viewer dock widget was deleted. Unable to hide it.")
-
-    def update_selections(self):
-        for layer in self.lifetime_viewer.layers:
-            update_selection(layer)
-        for layer in self.phasor_viewer.layers:
-            update_selection(layer)
-    
-    def create_lifetime_select_layer(self):
-        viewer = self.lifetime_viewer
-        co_viewer = self.phasor_viewer
-        color = next(self.colors)
-        select_layer = viewer.add_shapes(DEFUALT_LIFETIME_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0)
-        sel = co_viewer.layers.selection.copy()
-        co_selection = co_viewer.add_points(None, name="Correlation", size=1/PHASOR_SCALE, face_color=color, edge_width=0, scale=[-PHASOR_SCALE, PHASOR_SCALE])
-        co_viewer.layers.selection = sel
-        co_selection.editable = False
-        decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
-        set_selection(select_layer, LifetimeSelectionMetadata(select_layer, co_selection, decay_plot, self))
-        select_layer.mouse_drag_callbacks.append(select_shape_drag)
-        select_layer.events.data.connect(update_selection_callback)
-        select_layer.events.visible.connect(update_selection_callback)
-        select_layer.mode = "select"
-        return select_layer
-
-    # TODO most of this code is duplicate of above method
-    def create_phasor_select_layer(self):
-        viewer = self.phasor_viewer
-        co_viewer = self.lifetime_viewer
-        color = next(self.colors)
-        select_layer = viewer.add_shapes(DEFUALT_PHASOR_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0, scale=[-1, 1])
-        sel = co_viewer.layers.selection.copy()
-        co_selection = co_viewer.add_points(None, name="Correlation", size=1, face_color=color, edge_width=0)
-        co_viewer.layers.selection = sel
-        co_selection.editable = False
-        decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
-        set_selection(select_layer, PhasorSelectionMetadata(select_layer, co_selection, decay_plot, self))
-        select_layer.mouse_drag_callbacks.append(select_shape_drag)
-        select_layer.events.data.connect(update_selection_callback)
-        select_layer.events.visible.connect(update_selection_callback)
-        select_layer.mode = "select"
-        return select_layer
-
-def compute_fits(photon_count, params : "FlimParams"):
-    period = params.period
-    fstart = params.fit_start if params.fit_start < photon_count.shape[-1] else photon_count.shape[-1]
-    fend =  params.fit_end if params.fit_end <= photon_count.shape[-1] else photon_count.shape[-1]
-    rld = flimlib.GCI_triple_integral_fitting_engine(period, photon_count, fit_start=fstart, fit_end=fend, compute_residuals=False)
-    param_in = [rld.Z, rld.A, rld.tau]
-    lm = flimlib.GCI_marquardt_fitting_engine(period, photon_count, param_in, fit_start=fstart, fit_end=fend, compute_residuals=False, compute_covar=False, compute_alpha=False, compute_erraxes=False)
-    return rld, lm
-
-def zoom_viewer(viewer : QtViewer, bounds):
-    state = {"rect": bounds}
-    viewer.view.camera.set_state(state)
-
-class CurveFittingPlot():
-    #TODO add transform into log scale
-    def __init__(self, viewer : Viewer, scatter_color="magenta"):
-        self.fig = Fig()
-        # add a docked figure
-        self.dock_widget = viewer.window.add_dock_widget(self.fig, area="bottom")
-        # TODO remove access to private member
-        self.dock_widget._close_btn = False
-        # TODO float button crashes the entire app. Couldn"t find a way to remove it. Fix the crash?
-        
-        # get a handle to the plotWidget
-        self.ax = self.fig[0, 0]
-        self.lm_curve = self.ax.plot(None, color="g", marker_size=0, width=2)
-        self.rld_curve = self.ax.plot(None, color="r", marker_size=0, width=2)
-        self.scatter_color = scatter_color
-        self.data_scatter = self.ax.scatter(None, size=1, edge_width=0, face_color=scatter_color)
-        self.fit_start_line = self.ax.plot(None, color="b", marker_size=0, width=2)
-        self.fit_end_line = self.ax.plot(None, color="b", marker_size=0, width=2)
-        self.rld_info = Text(None, parent=self.ax.view, color="r", anchor_x="right", font_size = FONT_SIZE)
-        self.lm_info = Text(None, parent=self.ax.view, color="g", anchor_x="right", font_size = FONT_SIZE)
-    
-    def update_with_selection(self, selection_task : "SelectionComputeTask"):
-        selection = selection_task.selection.result(timeout=0)
-        params = selection_task.params
-        
-        rld_selected = selection.rld
-        lm_selected = selection.lm
-        period = params.period
-        fit_start = params.fit_start
-        fit_end = params.fit_end
-
-        time = np.linspace(0, lm_selected.fitted.size * params.period, lm_selected.fitted.size, endpoint=False, dtype=np.float32)
-        fit_time = time[fit_start:fit_end]
-        if len(fit_time) > 0: # a bug where setting as size zero data does not properly clear the drawn curves
-            self.lm_curve.set_data((fit_time, lm_selected.fitted[fit_start:fit_end]))
-            self.rld_curve.set_data((fit_time, rld_selected.fitted[fit_start:fit_end]))
-        else:
-            self.lm_curve.set_data(([0],[0]))
-            self.rld_curve.set_data(([0],[0]))
-        self.data_scatter.set_data(np.array((time, selection.histogram)).T, size=3, edge_width=0, face_color=self.scatter_color)
-        self.rld_info.pos = self.ax.view.size[0], self.rld_info.font_size
-        self.rld_info.text = "RLD | chisq = " + "{:.2e}".format(float(rld_selected.chisq)) + ", tau = " + "{:.2e}".format(float(rld_selected.tau))
-        self.lm_info.pos = self.ax.view.size[0], self.rld_info.font_size*3
-        self.lm_info.text = "LMA | chisq = " + "{:.2e}".format(float(lm_selected.chisq)) + ", tau = " + "{:.2e}".format(float(lm_selected.param[2]))
-        
-        # autoscale based on data (ignore start/end lines)
-        self.fit_start_line.set_data(np.zeros((2,1)))
-        self.fit_end_line.set_data(np.zeros((2,1)))
-        try:
-            self.ax.autoscale()
-        except ValueError:
-            pass
-        self.fit_start_line.set_data(([fit_start * period, fit_start * period], self.ax.camera._ylim))
-        self.fit_end_line.set_data(([fit_end * period, fit_end * period], self.ax.camera._ylim))
 
 
+# adapted from stackoverflow.com :)
+def timing(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        ts = time()
+        result = f(*args, **kw)
+        te = time()
+        logging.debug(f"Function {f.__name__} took {te-ts:2.4f} seconds")
+        return result
+    return wrap
 
-class SelectionComputeTask:
-    def __init__(self, selection_metadata : "SelectionMetadata"):
+class ComputeTask:
+    def __init__(self, step : int, series_viewer : "SeriesViewer"):
         self._valid = True
+        self._step = step
+        self._series_viewer = series_viewer # need this to retrieve the most recent photon_count/params
+
+        self.intensity = None
+        self.lifetime_image = None
+        self.phasor = None
+        self.phasor_quadtree = None
+        self.phasor_image = None
+        self.phasor_face_color = None
         self.done = None
 
-        series_viewer = selection_metadata.series_viewer
-        sequence_viewer = series_viewer.get_exposed_sequence_viewer()
-        if series_viewer.should_show_displays() and sequence_viewer is not None:
-            stp = series_viewer.get_current_step()
-            photon_count = sequence_viewer.get_photon_count(stp)
-            tasks = sequence_viewer.get_task(stp)
-        else:
-            photon_count = EMPTY_PHOTON_COUNT
-            tasks = None
+    def start(self):
+        if self._series_viewer is not None and not self.all_started(): # dont start more than once
+            photon_count = self._series_viewer.get_photon_count(self._step)
+            params = self._series_viewer.settings.flim_params
+            display_settings = self._series_viewer.settings.display_settings
 
-        self.params = series_viewer.flim_params
-        if len(selection_metadata.selection.data) > 0 and selection_metadata.selection.visible:
-            mask_result = selection_metadata.compute_mask(photon_count)
-        else:
-            mask_result = None
-        self.selection = executor.submit(selection_metadata.compute_selection, mask_result, tasks, photon_count, self.params)
-        self.done = gather_futures(self.selection)
-        self.done.add_done_callback(selection_metadata.update_callback)            
+            self.intensity = EXECUTOR.submit(compute_intensity, photon_count)
+            self.lifetime_image = EXECUTOR.submit(compute_lifetime_image, photon_count, self.intensity, params, display_settings)
+            self.phasor = EXECUTOR.submit(compute_phasor, photon_count, params)
+            self.phasor_quadtree = EXECUTOR.submit(compute_phasor_quadtree, self.phasor)
+            self.phasor_image = EXECUTOR.submit(compute_phasor_image, self.phasor)
+            self.phasor_face_color = EXECUTOR.submit(compute_phasor_face_color, self.intensity)
+            self.done = gather_futures(self.intensity, self.lifetime_image, self.phasor, self.phasor_quadtree, self.phasor_image, self.phasor_face_color)
+            self.done.add_done_callback(self._series_viewer.compute_done_callback)
 
-    @ensure_main_thread
     def cancel(self):
         if self.all_started(): # if looking at an old snapshot
-            self.selection.cancel()
+            self.intensity.cancel()
+            self.lifetime_image.cancel()
+            self.phasor.cancel()
+            self.phasor_quadtree.cancel()
+            self.phasor_image.cancel()
+            self.phasor_face_color.cancel()
             self.done.cancel()
     
     def all_started(self):
@@ -580,163 +88,279 @@ class SelectionComputeTask:
     def is_valid(self):
         return self._valid
 
-class SelectionMetadata(ABC):
-    def __init__(self, selection : Shapes, co_selection : Points, decay_plot : CurveFittingPlot, series_viewer : SeriesViewer):
-        self.selection = selection
-        self.co_selection = co_selection
-        self.decay_plot = decay_plot
-        self.series_viewer = series_viewer
-        self.tasks = None
+class LifetimeImageProxy:
+    """
+    An array-like object backed by the collection of lifetime_image tasks
+    """
+
+    def __init__(self, tasks_list : List[ComputeTask], image_shape, old_proxy : np.ndarray, dtype=np.float32):
+        if not len(tasks_list):
+            # At least for now, dont allow empty
+            raise ValueError("LifetimeImageProxy must have at least one task")
+        self._arrays = tasks_list
+        self._image_shape = image_shape
+        if old_proxy.shape != image_shape:
+            raise ValueError(f"old proxy with shape {old_proxy.shape} must match new shape {image_shape}")
+        self._most_recent = old_proxy
+        self._dtype = dtype
+
+    def get_old_proxy(self):
+        return self._most_recent
+
+    @property
+    def ndim(self):
+        return 1 + len(self._image_shape)
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @property
+    def shape(self):
+        return (len(self._arrays),) + self._image_shape
+
+    def __getitem__(self, slices):
+        if not isinstance(slices, tuple):
+            slices = (slices,)
+        ndslices = slices[1:]
+        s0 = slices[0]
+        if isinstance(s0, slice):
+            start, stop, step = s0.indices(len(self._arrays))
+            dim0 = (stop - start) // step
+            shape = (dim0,) + get_sliced_shape(self._image_shape, ndslices)
+            ret = np.empty(shape, dtype=self._dtype)
+            j0 = 0
+            for i0 in range(start, stop, step):
+                ret[j0] = self._get_slices_at_index(i0, ndslices)
+                j0 += 1
+            return ret
+        else:  # s0 is an integer
+            return self._get_slices_at_index(s0, ndslices)
+
+    def _get_slices_at_index(self, index, slices):
+        task = self._arrays[index]
+        if task.all_done():
+            self._most_recent = task.lifetime_image.result(timeout=0)
+        else:
+            task.start()
+        return self._most_recent[slices]
+
+    def __array__(self):
+        logging.warning("Full array of proxy array has been unexpectedly requested.")
+        return self[:]
     
-    @abstractmethod
-    def compute_selection(self, mask_result: MaskResult, tasks: ComputeTask, photon_count: np.ndarray, params : "FlimParams") -> SelectionResult:
-        pass
+    def __len__(self):
+        return np.prod(self.shape)
 
-    @abstractmethod
-    def compute_mask(self, photon_count) -> MaskResult | None:
-        pass
+def create_lifetime_image_proxy(series_viewer : "SeriesViewer", dtype=np.float32):
+    tasks_list = series_viewer.get_tasks_list()
 
-    @ensure_main_thread
-    def update_callback(self, done):
-        self._update()
+    image_shape = series_viewer.get_image_shape() + (4,) # rgb
+    possible_old_proxy = series_viewer.lifetime_image.data
+    if isinstance(possible_old_proxy, LifetimeImageProxy):
+        old_proxy = possible_old_proxy.get_old_proxy()
+    else:
+        old_proxy = np.zeros(image_shape, dtype=dtype)
+    
+    return LifetimeImageProxy(tasks_list, image_shape, old_proxy, dtype=dtype)
 
-    def _update(self):
-        if self.tasks is None:
-            self.tasks = SelectionComputeTask(self)
-        if not self.tasks.is_valid() and not self.tasks.is_running():
-            # restart selection tasks
-            self.tasks.cancel()
-            self.tasks = SelectionComputeTask(self)
-        if self.tasks.all_done():
-            #update selection displays
-            self.decay_plot.update_with_selection(self.tasks)
-            # TODO why does the following line take more than 50% of the runtime of this function?
-            set_points(self.co_selection, self.tasks.selection.result(timeout=0).points)
-            self.co_selection.editable = False
+def get_sliced_shape(shape : tuple, slices):
+    """
+    predicts the resulting shape of an array-like with 
+    the given `shape` after indexing with `slices`
+    """
+    ret = ()
+    for i, dim in enumerate(shape):
+        if i < len(slices):
+            s = slices[i]
+            if isinstance(s, slice):
+                start, stop, step = s.indices(dim)
+                ret += ((stop - start) // step,)
+            elif not np.isscalar(s):
+                raise TypeError(f"slices must contain either slice or scalar, not {type(s)}")
+        else:
+            ret += (dim,)
+    return ret
+
+# about 0.1 seconds for 256x256x256 data
+@timing
+def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[np.ndarray], params : FlimParams, display_settings : DisplaySettings):
+    period = params.period
+    fstart = params.fit_start if params.fit_start < photon_count.shape[-1] else photon_count.shape[-1]
+    fend =  params.fit_end if params.fit_end <= photon_count.shape[-1] else photon_count.shape[-1]
+    rld = flimlib.GCI_triple_integral_fitting_engine(period, photon_count, fit_start=fstart, fit_end=fend, compute_fitted=False, compute_residuals=False)
+    tau = rld.tau
+    
+    intensity = intensity_future.result()
+    invalid_indexer = np.where(
+        (np.isnan(tau)) |
+        (rld.chisq > display_settings.max_chisq) |
+        (tau < display_settings.min_tau) |
+        (tau > display_settings.max_tau)
+    )
+    intensity[invalid_indexer] = np.nan
+    tau[invalid_indexer] = np.nan
+    intensity = normalize(intensity)
+    np.nan_to_num(intensity, copy=False)
+    tau = normalize(tau, min_in=display_settings.min_tau, max_in=display_settings.max_tau)
+    np.nan_to_num(tau, copy=False)
+    rgb_tau = COLORMAPS[display_settings.colormap](tau)
+    rgb_tau[...,:3] *= intensity[..., np.newaxis]
+    return rgb_tau
+
+def compute_intensity(photon_count : np.ndarray) -> np.ndarray:
+    return np.nansum(photon_count, axis=-1)
+
+def compute_phasor_image(phasor_future : Future[np.ndarray]):
+    phasor = phasor_future.result()
+    return phasor.reshape(-1,phasor.shape[-1])
+
+def compute_phasor_face_color(intensity_future : Future[np.ndarray]):
+    intensity = normalize(intensity_future.result())
+    phasor_intensity = intensity.ravel() * PHASOR_OPACITY_FACTOR
+    color = np.broadcast_to(1.0, phasor_intensity.shape)
+    return np.asarray([color,color,color,phasor_intensity]).T
+
+def normalize(data : np.ndarray, min_in=None, max_in=None, min_out=0, max_out=1) -> np.ndarray:
+    if min_in is None:
+        min_in = np.nanmin(data)
+    if max_in is None:
+        max_in = np.nanmax(data)
+    scale_in = max_in - min_in
+    if scale_in <= 0 or np.isnan(scale_in):
+        return(np.zeros_like(data) + min_out)
+    scale_out = max_out - min_out
+    return ((data - min_in) * (scale_out / scale_in)) + min_out
+
+@timing
+def compute_phasor(photon_count : np.ndarray, params : FlimParams):
+    period = params.period
+    fstart = params.fit_start if params.fit_start < photon_count.shape[-1] else photon_count.shape[-1]
+    fend =  params.fit_end if params.fit_end <= photon_count.shape[-1] else photon_count.shape[-1]
+    # about 0.5 sec for 256x256x256 data
+    phasor = flimlib.GCI_Phasor(period, photon_count, fit_start=fstart, fit_end=fend, compute_fitted=False, compute_residuals=False, compute_chisq=False)
+    #reshape to work well with mapping / creating the phasor plot. Result has shape (height, width, 2)
+    return np.dstack([phasor.v, phasor.u])
+
+def compute_phasor_quadtree(phasor_future : Future[np.ndarray]):
+    phasor = phasor_future.result() * PHASOR_SCALE
+    # workaround that fixes https://github.com/scipy/scipy/issues/14527
+    np.nan_to_num(phasor, copy=False, nan=np.inf)
+    quadtree = KDTree(phasor.reshape(-1, phasor.shape[-1]))
+    return quadtree
+
+@dataclass
+class _SnapshotData:
+    photon_count : np.ndarray
+    tasks : ComputeTask
+
+class SeriesViewer(QObject):
+    compute_done = Signal()
+
+    def __init__(self, image : Image, shape, settings : Settings):
+        super(SeriesViewer, self).__init__()
+
+        self._snapshots : List[_SnapshotData]= []
+        self.shape = shape
+        self.lifetime_image = image
+        self.settings = settings
+
+    def validate_tasks(self, index):
+        """
+        Set the task at the given index to a new task if it is not valid
+        """
+        index %= len(self._snapshots) # convert to positive index
+        tasks = self._snapshots[index].tasks
+        if tasks is None:
+            self._snapshots[index].tasks = ComputeTask(index, self)
+        elif not tasks.is_valid() and not tasks.is_running():
+            self._snapshots[index].tasks = ComputeTask(index, self)
+            tasks.cancel()
+
+    def snap(self):
+        """
+        Create a new snapshot and assigning it compute tasks. Creates
+        new compute tasks only if necessary.
+        """
+        if self.has_data():
+            prev = self._snapshots[-1]
+            if self.settings.delta_snapshots:
+                self._snapshots += [_SnapshotData(prev.photon_count, None)]
+                self.validate_tasks(-1)
+            else:
+                self._snapshots += [_SnapshotData(prev.photon_count, prev.tasks)]
+            self.swap_lifetime_proxy_array()
+
+    def receive_and_update(self, photon_count : np.ndarray):
+        """
+        Create or update the live frame with the incoming data.
+        """
+        # for now, we ignore all but the first channel
+        photon_count = photon_count[tuple([0] * (photon_count.ndim - 3))]
+        # check if this is the first time receiving data
+        if not self.has_data():
+            self._snapshots += [_SnapshotData(photon_count, None)]
+        else:
+            snap = self._snapshots[-1] # live frame is the last
+            snap.photon_count = photon_count
+            snap.tasks.invalidate()
         
-    def update(self):
-        if self.tasks is not None:
-            self.tasks.invalidate()
-        self._update()
+        self.validate_tasks(-1)
+        self.swap_lifetime_proxy_array()
 
-class LifetimeSelectionMetadata(SelectionMetadata):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-    def compute_mask(self, photon_count):
-        masks = self.selection.to_masks(photon_count.shape[-3:-1]).astype(bool)
-        union_mask = np.logical_or.reduce(masks)
-        return MaskResult(mask=union_mask, extrema=None)
+    def set_settings(self, settings : Settings):
+        """
+        The settings have changed, we must invalidate all old tasks and populate proxy array with fresh tasks.
+        """
+        self.settings = settings
+        if self.has_data():
+            for i in range(len(self._snapshots)):
+                tasks = self._snapshots[i].tasks
+                if tasks is not None:
+                    tasks.invalidate()
+                self.validate_tasks(i)
+            self.swap_lifetime_proxy_array()
+    
+    @ensure_main_thread
+    def compute_done_callback(self, done):
+        self.compute_done.emit()
+        for i in range(len(self._snapshots)):
+            self.validate_tasks(i)
+        self.swap_lifetime_proxy_array()
 
-    def compute_selection(self, mask_result: MaskResult, tasks: ComputeTask, photon_count: np.ndarray, params : "FlimParams") -> SelectionResult:
-        if mask_result is not None and tasks is not None and tasks.all_done():
-            points = np.asarray(np.where(mask_result.mask)).T
-            if(len(points) > 0):
-                points_indexer = tuple(np.asarray(points).T)
-                co_selection = tasks.phasor.result(timeout=0)[points_indexer]
-                histogram = np.mean(photon_count[points_indexer],axis=0)
-                rld, lm = compute_fits(histogram, params)
-                return SelectionResult(histogram=histogram, points=co_selection, rld=rld, lm=lm)
-        histogram = np.broadcast_to(np.array([np.nan]), (photon_count.shape[-1],))
-        co_selection = None
-        rld, lm = compute_fits(histogram, params) # TODO these are just gonna fail and return Nan results
-        return SelectionResult(histogram=histogram, points=co_selection, rld=rld, lm=lm)
+    def swap_lifetime_proxy_array(self):
+        self.lifetime_image.data = create_lifetime_image_proxy(self)
 
-class PhasorSelectionMetadata(SelectionMetadata):
-    def compute_mask(self, photon_count):
-        extrema = np.ceil(self.selection._extent_data).astype(int) # the private field since `extent` is a `cached_property`
-        bounding_shape = extrema[1] - extrema[0] + 1 # add one since extremas are inclusive
-        offset=extrema[0]
-        # use of private field `_data_view` since the shapes.py `to_masks()` fails to recognize offset
-        masks = self.selection._data_view.to_masks(mask_shape=bounding_shape, offset=offset)
-        union_mask = np.logical_or.reduce(masks)
-        return MaskResult(extrema, union_mask)
+    def get_tasks_list(self):
+        return [snapshot.tasks for snapshot in self._snapshots]
 
-    def compute_selection(self, mask_result: MaskResult, tasks: ComputeTask, photon_count: np.ndarray, params : "FlimParams") -> SelectionResult:
-        phcpy = copy.copy(photon_count)
-        if mask_result is not None and tasks is not None and tasks.all_done():
-            extrema = mask_result.extrema
-            mask = mask_result.mask
-            bounding_center = np.mean(extrema, axis=0)
-            bounding_shape = extrema[1] - extrema[0] + 1 # add one since extremas are inclusive
-            bounding_radius = np.max(bounding_center - extrema[0]) # distance in the p = inf norm
-            height, width = photon_count.shape[-3:-1]
-            maxpoints = width * height
-            distances, indices = tasks.phasor_quadtree.result(timeout=0).query(bounding_center, maxpoints, p=np.inf, distance_upper_bound=bounding_radius)
-            n_indices = np.searchsorted(distances, np.inf)
-            if n_indices > 0:
-                indices = indices[0:n_indices]
-                bounded_points = np.asarray([indices // height, indices % width]).T
+    def get_task(self, step):
+        return self.get_tasks_list()[step] if -len(self._snapshots) <= step < len(self._snapshots) else None
 
-                points = []
-                offset=extrema[0]
-                # use of private field `_data_view` since the shapes.py `to_masks()` fails to recognize offset
-                phasor = (tasks.phasor.result(timeout=0) * PHASOR_SCALE).astype(int)
-                for point in bounded_points:
-                    bounded_phasor = phasor[tuple(point)]
-                    mask_indexer = tuple(bounded_phasor - offset)
-                    # kd tree found a square bounding box. some of these points might be outside of the rectangular mask
-                    if mask_indexer[0] < 0 or mask_indexer[1] < 0 or mask_indexer[0] >= bounding_shape[0] or mask_indexer[1] >= bounding_shape[1]:
-                        continue
-                    if mask[mask_indexer]:
-                        points += [point]
-                if points:
-                    points = np.asarray(points)
-                    if np.any(points < 0):
-                        raise ValueError("Negative index encountered while indexing image layer. This is outside the image!")
-                    points_indexer = tuple(points.T)
-                    histogram = np.mean(phcpy[points_indexer], axis=0)
-                    rld, lm = compute_fits(histogram, params)
-                    return SelectionResult(histogram=histogram, points=points, rld=rld, lm=lm)
+    def get_tau_axis_size(self):
+        return self.shape[-1]
 
-        histogram = np.broadcast_to(np.array([np.nan]), (photon_count.shape[-1],))
-        co_selection = None
-        rld, lm = compute_fits(histogram, params) # TODO these are just gonna fail and return Nan results
-        return SelectionResult(histogram=histogram, points=co_selection, rld=rld, lm=lm)
+    def get_image_shape(self):
+        """Returns shape of the image (height, width)"""
+        return self.shape[-3:-1]
 
-def set_points(points_layer : Points, points : np.ndarray):
-    try:
-        points_layer.data = points if points is None or len(points) else None
-    except OverflowError:
-        # there seems to be a bug in napari with an overflow error
-        pass
-    points_layer.selected_data = {}
+    def get_num_phasors(self):
+        return np.prod(self.get_image_shape())
 
-def set_sequence_viewer(layer : Image, sequence_viewer : SequenceViewer):
-    layer.metadata["sequence_viewer"] = sequence_viewer
+    def has_data(self):
+        return bool(self._snapshots)
 
-def get_sequence_viewer(layer : Image) -> SequenceViewer | None:
-    return layer.metadata["sequence_viewer"] if "sequence_viewer" in layer.metadata else None
+    def live_index(self):
+        return len(self._snapshots) - 1
 
-def set_selection(layer : Shapes, selection_metadata : SelectionMetadata):
-    layer.metadata["selection"] = selection_metadata
-
-def get_selection(layer : Shapes) -> SelectionMetadata | None:
-    return layer.metadata["selection"] if "selection" in layer.metadata else None
-
-def update_selection(layer : Shapes):
-    selection = get_selection(layer)
-    if selection is not None:   
-        selection.update()
-
-def select_shape_drag(layer : Shapes, event : Event):
-    update_selection(layer)
-    yield
-    while event.type == "mouse_move":
-        update_selection(layer)
-        yield
-
-def update_selection_callback(event : Event):
-    event_layer = event.sources[0]
-    update_selection(event_layer)
-
-def show_decay_plot(layer : Shapes):
-    selection = get_selection(layer)
-    if selection is not None:
-        selection.decay_plot.dock_widget.show()
-
-def hide_decay_plot(layer : Shapes):
-    selection = get_selection(layer)
-    if selection is not None:
-        selection.decay_plot.dock_widget.hide()
-
-
+    def get_photon_count(self, step) -> np.ndarray:
+        """
+        Returns the effective photon count at the given step
+        that should be used for computation.
+        """
+        if -len(self._snapshots) <= step < len(self._snapshots):
+            if self.settings.delta_snapshots and step != 0 and step != -len(self._snapshots):
+                return self._snapshots[step].photon_count - self._snapshots[step - 1].photon_count
+            else:
+                return self._snapshots[step].photon_count
+        return np.broadcast_to(np.array([np.nan]), self.shape)

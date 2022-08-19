@@ -1,7 +1,7 @@
 from napari_live_flim import FlimViewer
 from napari import Viewer
 from pytestqt.plugin import QtBot
-from napari_live_flim._dataclasses import *
+from napari_live_flim._constants import *
 
 # make_napari_viewer is a pytest fixture that returns a napari viewer object
 # capsys is a pytest fixture that captures stdout and stderr output streams

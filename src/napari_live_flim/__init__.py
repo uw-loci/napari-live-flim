@@ -1,7 +1,6 @@
-from ._series_viewer import SeriesViewer
+from ._controller import Controller
 from napari import Viewer
-from qtpy import QtCore
-from qtpy.QtWidgets import QWidget, QFormLayout, QApplication
+from qtpy.QtWidgets import QWidget, QFormLayout
 
 __version__ = "0.0.1"
 
@@ -20,7 +19,7 @@ class FlimViewer(QWidget):
         if FlimViewer.instance() is not None:
             self.series_viewer = FlimViewer.instance().series_viewer
         else:
-            self.series_viewer = SeriesViewer(napari_viewer)
+            self.series_viewer = Controller(napari_viewer)
 
         self.layout = QFormLayout()
         self.setLayout(self.layout)

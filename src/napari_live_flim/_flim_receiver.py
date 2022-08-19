@@ -1,13 +1,13 @@
 import logging
 from qtpy.QtCore import QObject, Signal
 from napari.qt.threading import thread_worker
+from ._constants import *
 from ._dataclasses import *
 import numpy as np
 import os.path
 import socket
 import mmap
 import tempfile
-import gc
 
 class FlimReceiver(QObject):
     """

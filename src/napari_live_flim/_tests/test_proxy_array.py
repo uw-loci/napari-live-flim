@@ -1,5 +1,5 @@
 import numpy as np
-from napari_live_flim._sequence_viewer import LifetimeImageProxy, SequenceViewer, ComputeTask
+from napari_live_flim._series_viewer import LifetimeImageProxy, ComputeTask
 
 NUM_PIXELS = 128
 RGB_IMAGE_SHAPE = (NUM_PIXELS, NUM_PIXELS, 3)
