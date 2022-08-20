@@ -348,7 +348,9 @@ class Controller():
         Update phasor plot and selections with results if available
         """
         series_viewer = self.get_exposed_series_viewer()
+        frame_no = None
         if self.should_show_displays() and series_viewer is not None:
+            frame_no = series_viewer.get_frame_no(self.get_current_step())
             step = self.get_current_step()
             tasks = series_viewer.get_task(step)
             if tasks is not None and tasks.all_done():
@@ -360,6 +362,12 @@ class Controller():
                 self.phasor_image.selected_data = {}
         else:
             set_points(self.phasor_image, None)
+
+        if frame_no is not None:
+            self.lifetime_viewer.text_overlay.visible = True
+            self.lifetime_viewer.text_overlay.text = f"frame {frame_no}"
+        else:
+            self.lifetime_viewer.text_overlay.visible = False
 
         self.update_selections()
 
@@ -394,7 +402,7 @@ class Controller():
 
     def receive_and_update(self, element : ElementData):
         if self.live_series_viewer is not None:
-            self.live_series_viewer.receive_and_update(element.frame)
+            self.live_series_viewer.receive_and_update(element)
         else:
             logging.error("Received data before processing start series message")
 
@@ -715,7 +723,6 @@ class PhasorSelectionMetadata(SelectionMetadata):
         return MaskResult(extrema, union_mask)
 
     def compute_selection(self, mask_result: MaskResult, tasks: ComputeTask, photon_count: np.ndarray, params : "FlimParams") -> SelectionResult:
-        phcpy = copy.copy(photon_count)
         if mask_result is not None and tasks is not None and tasks.all_done():
             extrema = mask_result.extrema
             mask = mask_result.mask
@@ -747,7 +754,7 @@ class PhasorSelectionMetadata(SelectionMetadata):
                     if np.any(points < 0):
                         raise ValueError("Negative index encountered while indexing image layer. This is outside the image!")
                     points_indexer = tuple(points.T)
-                    histogram = np.mean(phcpy[points_indexer], axis=0)
+                    histogram = np.mean(photon_count[points_indexer], axis=0)
                     rld, lm = compute_fits(histogram, params)
                     return SelectionResult(histogram=histogram, points=points, rld=rld, lm=lm)
 

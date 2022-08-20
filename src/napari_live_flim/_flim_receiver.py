@@ -55,6 +55,9 @@ class FlimReceiver(QObject):
                 if frame is Ellipsis:
                     logging.info("Worker exiting")
                     return
+                # for now, we ignore all but the first channel
+                if frame.ndim > 3:
+                    frame = frame[tuple([0] * (frame.ndim - 3))]
                 yield ElementData(series_no, seqno, frame)
 
 class Receiver:

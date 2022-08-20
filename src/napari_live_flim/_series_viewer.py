@@ -251,7 +251,7 @@ def compute_phasor_quadtree(phasor_future : Future[np.ndarray]):
 
 @dataclass
 class _SnapshotData:
-    photon_count : np.ndarray
+    element : ElementData
     tasks : ComputeTask
 
 class SeriesViewer(QObject):
@@ -285,24 +285,22 @@ class SeriesViewer(QObject):
         if self.has_data():
             prev = self._snapshots[-1]
             if self.settings.delta_snapshots:
-                self._snapshots += [_SnapshotData(prev.photon_count, None)]
+                self._snapshots += [_SnapshotData(prev.element, None)]
                 self.validate_tasks(-1)
             else:
-                self._snapshots += [_SnapshotData(prev.photon_count, prev.tasks)]
+                self._snapshots += [_SnapshotData(prev.element, prev.tasks)]
             self.swap_lifetime_proxy_array()
 
-    def receive_and_update(self, photon_count : np.ndarray):
+    def receive_and_update(self, element : ElementData):
         """
         Create or update the live frame with the incoming data.
         """
-        # for now, we ignore all but the first channel
-        photon_count = photon_count[tuple([0] * (photon_count.ndim - 3))]
         # check if this is the first time receiving data
         if not self.has_data():
-            self._snapshots += [_SnapshotData(photon_count, None)]
+            self._snapshots += [_SnapshotData(element, None)]
         else:
             snap = self._snapshots[-1] # live frame is the last
-            snap.photon_count = photon_count
+            snap.element = element
             snap.tasks.invalidate()
         
         self.validate_tasks(-1)
@@ -352,15 +350,27 @@ class SeriesViewer(QObject):
 
     def live_index(self):
         return len(self._snapshots) - 1
+    
+    def get_frame_no(self, step):
+        elem = self.get_element(step)
+        return elem.seqno if elem is not None else None
 
     def get_photon_count(self, step) -> np.ndarray:
         """
         Returns the effective photon count at the given step
-        that should be used for computation.
+        that should be used for computation. If no snapshot exists
+        at the step, returns a NaN filled array instead.
         """
-        if -len(self._snapshots) <= step < len(self._snapshots):
-            if self.settings.delta_snapshots and step != 0 and step != -len(self._snapshots):
-                return self._snapshots[step].photon_count - self._snapshots[step - 1].photon_count
-            else:
-                return self._snapshots[step].photon_count
+        elem = self.get_element(step)
+        if elem is not None:
+            if self.settings.delta_snapshots and step != 0:
+                prev_elem = self.get_element(step - 1)
+                if prev_elem is not None:
+                    return elem.frame - prev_elem.frame
+            return elem.frame
         return np.broadcast_to(np.array([np.nan]), self.shape)
+
+    def get_element(self, step):
+        if -len(self._snapshots) <= step < len(self._snapshots):
+            return self._snapshots[step].element
+        return None
