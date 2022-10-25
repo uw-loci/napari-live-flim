@@ -2,7 +2,6 @@ import time
 from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import wraps
-from time import time
 from typing import TYPE_CHECKING, List
 
 import flimlib
@@ -21,15 +20,17 @@ from ._constants import *
 from ._dataclasses import *
 from .gather_futures import gather_futures
 
+_receive_times = {}
+_compute_times = []
 
 # adapted from stackoverflow.com :)
 def timing(f):
     @wraps(f)
     def wrap(*args, **kw):
-        ts = time()
+        ts = time.perf_counter()
         result = f(*args, **kw)
-        te = time()
-        logging.debug(f"Function {f.__name__} took {te-ts:2.4f} seconds")
+        t = (time.perf_counter() - ts) * 1000
+        logging.info(f"Function {f.__name__} took {t} milliseconds")
         return result
     return wrap
 
@@ -60,10 +61,11 @@ class ComputeTask:
             self.phasor_image = EXECUTOR.submit(compute_phasor_image, self.phasor)
             self.phasor_face_color = EXECUTOR.submit(compute_phasor_face_color, self.intensity)
             self.done = gather_futures(self.intensity, self.lifetime_image, self.phasor, self.phasor_quadtree, self.phasor_image, self.phasor_face_color)
+            self.done.add_done_callback(self._stop_benchmark)
             self.done.add_done_callback(self._series_viewer.compute_done_callback)
 
     def cancel(self):
-        if self.all_started(): # if looking at an old snapshot
+        if self.all_started(): # if user is looking at a snapshot, latest may not have even been started
             self.intensity.cancel()
             self.lifetime_image.cancel()
             self.phasor.cancel()
@@ -87,6 +89,19 @@ class ComputeTask:
 
     def is_valid(self):
         return self._valid
+    
+    def _stop_benchmark(self, done):
+        global _compute_times
+        
+        fn = self._series_viewer.get_frame_no(self._step)
+        if fn in _receive_times.keys():
+            t = (time.perf_counter() - _receive_times.pop(fn)) * 1000
+            _compute_times += [t]
+            logging.info(f"Processing frame {fn} took {t} milliseconds. Mean {np.mean(_compute_times)}")
+        else:
+            logging.error(f"Benchmarking failed! frame number {fn} was not found")
+        
+        logging.info(f"There are {len(_receive_times)} frames that were skipped or not yet processed")
 
 class LifetimeImageProxy:
     """
@@ -295,6 +310,8 @@ class SeriesViewer(QObject):
         """
         Create or update the live frame with the incoming data.
         """
+        global _receive_times
+        _receive_times[element.seqno] = time.perf_counter()
         # check if this is the first time receiving data
         if not self.has_data():
             self._snapshots += [_SnapshotData(element, None)]
