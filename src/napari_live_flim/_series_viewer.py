@@ -1,7 +1,6 @@
 import time
 from concurrent.futures import Future
 from dataclasses import dataclass
-from functools import wraps
 from typing import TYPE_CHECKING, List
 
 import flimlib
@@ -19,20 +18,10 @@ if TYPE_CHECKING:
 from ._constants import *
 from ._dataclasses import *
 from .gather_futures import gather_futures
+from .timing import timing
 
 _receive_times = {}
 _compute_times = []
-
-# adapted from stackoverflow.com :)
-def timing(f):
-    @wraps(f)
-    def wrap(*args, **kw):
-        ts = time.perf_counter()
-        result = f(*args, **kw)
-        t = (time.perf_counter() - ts) * 1000
-        logging.info(f"Function {f.__name__} took {t} milliseconds")
-        return result
-    return wrap
 
 class ComputeTask:
     def __init__(self, step : int, series_viewer : "SeriesViewer"):
@@ -91,13 +80,13 @@ class ComputeTask:
         return self._valid
     
     def _stop_benchmark(self, done):
-        global _compute_times
+        global _compute_times, _receive_times
         
         fn = self._series_viewer.get_frame_no(self._step)
         if fn in _receive_times.keys():
             t = (time.perf_counter() - _receive_times.pop(fn)) * 1000
             _compute_times += [t]
-            logging.info(f"Processing frame {fn} took {t} milliseconds. Mean {np.mean(_compute_times)}")
+            logging.info(f"Processing frame {fn} took {t} milliseconds. Median {np.median(_compute_times)}")
         else:
             logging.error(f"Benchmarking failed! frame number {fn} was not found")
         
@@ -203,9 +192,10 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
     period = params.period
     fstart = params.fit_start if params.fit_start < photon_count.shape[-1] else photon_count.shape[-1]
     fend =  params.fit_end if params.fit_end <= photon_count.shape[-1] else photon_count.shape[-1]
+    # computing chi squared is a significant portion of the compute time
     rld = flimlib.GCI_triple_integral_fitting_engine(period, photon_count, fit_start=fstart, fit_end=fend, compute_fitted=False, compute_residuals=False)
     tau = rld.tau
-    
+
     intensity = intensity_future.result()
     invalid_indexer = np.where(
         (np.isnan(tau)) |
