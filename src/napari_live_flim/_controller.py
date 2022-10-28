@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import inspect
-import copy
 import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict
 from typing import List
-
-from napari.utils._proxies import PublicOnlyProxy
 
 import flimlib
 import numpy as np
@@ -26,6 +23,7 @@ from ._series_viewer import ComputeTask, SeriesViewer
 from ._widget import *
 from .gather_futures import gather_futures
 from .plot_widget import Fig
+from .timing import timing
 
 from ._flim_receiver import FlimReceiver
 
@@ -698,6 +696,7 @@ class LifetimeSelectionMetadata(SelectionMetadata):
         union_mask = np.logical_or.reduce(masks)
         return MaskResult(mask=union_mask, extrema=None)
 
+    @timing(name="compute_selection (lifetime image)")
     def compute_selection(self, mask_result: MaskResult, tasks: ComputeTask, photon_count: np.ndarray, params : "FlimParams") -> SelectionResult:
         if mask_result is not None and tasks is not None and tasks.all_done():
             points = np.asarray(np.where(mask_result.mask)).T
@@ -722,6 +721,7 @@ class PhasorSelectionMetadata(SelectionMetadata):
         union_mask = np.logical_or.reduce(masks)
         return MaskResult(extrema, union_mask)
 
+    @timing(name="compute_selection (phasor image)")
     def compute_selection(self, mask_result: MaskResult, tasks: ComputeTask, photon_count: np.ndarray, params : "FlimParams") -> SelectionResult:
         if mask_result is not None and tasks is not None and tasks.all_done():
             extrema = mask_result.extrema
