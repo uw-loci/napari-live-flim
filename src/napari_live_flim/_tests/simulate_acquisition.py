@@ -19,13 +19,11 @@ series_no = -1
 
 @thread_worker
 def send_series_direct(viewer : FlimViewer, series_no, frames, interval):
-    data_gen = data_generator()
+    data_gen = data_generator(frames)
+    frames = list(data_gen) # generating on each loop causes too much delay
     viewer.series_viewer.new_series(SeriesMetadata(series_no, "TEST", SHAPE))
-
-    for i in range(frames):
+    for i, frame in enumerate(frames):
         start = time.time()
-
-        frame = next(data_gen)
         viewer.series_viewer.new_element(ElementData(series_no, i, frame))
         finish = time.time()
         excess = finish - start - interval
@@ -55,14 +53,12 @@ def create_send_widget(viewer : napari.Viewer, flim_viewer : FlimViewer):
 
 @thread_worker
 def send_series_udp(port, frames, interval):
-    data_gen = data_generator()
+    data_gen = data_generator(frames)
+    frames = list(data_gen)
     sender = SeriesSender(np.dtype(np.uint16), SHAPE, port)
     sender.start()
-
-    for i in range(frames):
+    for i, frame in enumerate(frames):
         start = time.time()
-
-        frame = next(data_gen).copy()
         sender.send_element(i, frame)
         finish = time.time()
         excess = finish - start - interval
