@@ -13,7 +13,7 @@ from napari import Viewer
 from napari.components.viewer_model import ViewerModel
 from napari.layers import Image, Layer, Points, Shapes
 from napari.utils.events import Event
-from napari.qt import QtViewer
+from napari.qt import QtViewer, Window
 from superqt import ensure_main_thread
 from vispy.scene.visuals import Text
 
@@ -45,6 +45,7 @@ class Controller():
         self.live_series_viewer = None
         
         self.lifetime_viewer = napari_viewer
+        self.main_window = napari_viewer.window
         self.qt_main_window = napari_viewer.window._qt_window
         self.qt_lifetime_viewer = napari_viewer.window.qt_viewer
         self.phasor_viewer = ViewerModel(title="Phasor Viewer")
@@ -80,8 +81,8 @@ class Controller():
         self.qt_phasor_viewer.canvas.events.mouse_press.connect(self.switch_to_phasor_controls)
         self.qt_phasor_viewer.canvas.events.mouse_move.connect(self.display_phasor_mouse_pos)
         self.lifetime_viewer.layers.events.connect(self.validate_exposed_lifetime_image)
-        self.lifetime_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.lifetime_viewer, self.phasor_viewer))
-        self.phasor_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.phasor_viewer, self.lifetime_viewer))
+        self.lifetime_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.lifetime_viewer, self.phasor_viewer, self.main_window))
+        self.phasor_viewer.layers.events.removed.connect(lambda e: self.cleanup_removed_selection(e.value, self.phasor_viewer, self.lifetime_viewer, self.main_window))
         self.lifetime_viewer.dims.events.current_step.connect(self.update_displays)
         self.lifetime_viewer.dims.events.order.connect(self.update_displays)
         self.lifetime_viewer.grid.events.enabled.connect(self.update_displays)
@@ -295,7 +296,7 @@ class Controller():
                     self.exposed_lifetime_image = None
                     self.update_displays()
 
-    def cleanup_removed_selection(self, layer : Layer, viewer : Viewer, co_viewer : Viewer):
+    def cleanup_removed_selection(self, layer : Layer, viewer : Viewer, co_viewer : Viewer, window : Window):
         """
         Called when a selection or co-selection is being removed. If `layer` is a selection, 
         removes the co-selection, if `layer` is a co-selection, removes the selection that
@@ -309,13 +310,15 @@ class Controller():
             The viewer that the `layer` belongs to
         co_viewer : Viewer
             The viewer that the `layer` does not belong to
+        window : Window
+            The Window that the decay plot dock widgets are a part of
         """
         if has_selection(layer):
             # a selection is being remoevd
             selection = get_selection(layer)
             try:
                 co_viewer.layers.remove(selection.co_selection)
-                viewer.window.remove_dock_widget(selection.decay_plot.dock_widget)
+                window.remove_dock_widget(selection.decay_plot.dock_widget)
             except ValueError:
                 pass # already removed
         else:
@@ -324,7 +327,7 @@ class Controller():
             if selection is not None:
                 try:
                     co_viewer.layers.remove(selection.selection)
-                    co_viewer.window.remove_dock_widget(selection.decay_plot.dock_widget)
+                    window.remove_dock_widget(selection.decay_plot.dock_widget)
                 except ValueError:
                     pass # already removed
 
