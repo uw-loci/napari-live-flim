@@ -247,7 +247,7 @@ def compute_phasor(photon_count : np.ndarray, params : FlimParams):
     #reshape to work well with mapping / creating the phasor plot. Result has shape (height, width, 2)
     return np.dstack([phasor.v, phasor.u])
 
-def compute_phasor_quadtree(phasor_future : Future[np.ndarray]):
+def compute_phasor_quadtree(phasor_future : Future):
     phasor = phasor_future.result() * PHASOR_SCALE
     # workaround that fixes https://github.com/scipy/scipy/issues/14527
     np.nan_to_num(phasor, copy=False, nan=np.inf)
