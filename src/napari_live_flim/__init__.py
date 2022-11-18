@@ -2,7 +2,8 @@ from ._controller import Controller
 from napari import Viewer
 from qtpy.QtWidgets import QWidget, QFormLayout
 
-__version__ = "0.0.1"
+from ._version import __version__
+
 
 class FlimViewer(QWidget):
     """

@@ -188,7 +188,7 @@ def get_sliced_shape(shape : tuple, slices):
 
 # about 0.1 seconds for 256x256x256 data
 @timing
-def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[np.ndarray], params : FlimParams, display_settings : DisplaySettings):
+def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future, params : FlimParams, display_settings : DisplaySettings):
     period = params.period
     fstart = params.fit_start if params.fit_start < photon_count.shape[-1] else photon_count.shape[-1]
     fend =  params.fit_end if params.fit_end <= photon_count.shape[-1] else photon_count.shape[-1]
@@ -216,11 +216,11 @@ def compute_lifetime_image(photon_count : np.ndarray, intensity_future : Future[
 def compute_intensity(photon_count : np.ndarray) -> np.ndarray:
     return np.nansum(photon_count, axis=-1)
 
-def compute_phasor_image(phasor_future : Future[np.ndarray]):
+def compute_phasor_image(phasor_future : Future):
     phasor = phasor_future.result()
     return phasor.reshape(-1,phasor.shape[-1])
 
-def compute_phasor_face_color(intensity_future : Future[np.ndarray]):
+def compute_phasor_face_color(intensity_future : Future):
     intensity = normalize(intensity_future.result())
     phasor_intensity = intensity.ravel() * PHASOR_OPACITY_FACTOR
     color = np.broadcast_to(1.0, phasor_intensity.shape)
@@ -247,7 +247,7 @@ def compute_phasor(photon_count : np.ndarray, params : FlimParams):
     #reshape to work well with mapping / creating the phasor plot. Result has shape (height, width, 2)
     return np.dstack([phasor.v, phasor.u])
 
-def compute_phasor_quadtree(phasor_future : Future[np.ndarray]):
+def compute_phasor_quadtree(phasor_future : Future):
     phasor = phasor_future.result() * PHASOR_SCALE
     # workaround that fixes https://github.com/scipy/scipy/issues/14527
     np.nan_to_num(phasor, copy=False, nan=np.inf)
