@@ -66,16 +66,13 @@ class Controller():
         zoom_viewer(self.qt_phasor_viewer, ((0,-PHASOR_SCALE/2), (PHASOR_SCALE, PHASOR_SCALE/2)))
         self.phasor_image.editable = False
 
-        ph_ctrls = self.qt_phasor_viewer.dockLayerControls
-        ph_ctrls.name = "Phasor Layer Controls"
-        ph_ctrls.setWindowTitle("Phasor Layer Controls")
-        lt_ctrls = inspect.unwrap(self.qt_lifetime_viewer.dockLayerControls)
-        self.qt_main_window.tabifyDockWidget(lt_ctrls, ph_ctrls)
-        ph_list = self.qt_phasor_viewer.dockLayerList
-        ph_list.name = "Phasor Layer List"
-        ph_list.setWindowTitle("Phasor Layer List")
-        lt_list = inspect.unwrap(self.qt_lifetime_viewer.dockLayerList)
-        self.qt_main_window.tabifyDockWidget(lt_list, ph_list)
+        self.ph_ctrls = self.main_window.add_dock_widget(self.qt_phasor_viewer.dockLayerControls, name="phasor layer controls", area='bottom')
+        self.lt_ctrls = inspect.unwrap(self.qt_lifetime_viewer.dockLayerControls)
+        self.qt_main_window.tabifyDockWidget(self.lt_ctrls, self.ph_ctrls)
+        
+        self.ph_layerlist = self.main_window.add_dock_widget(self.qt_phasor_viewer.dockLayerList, name="phasor layer controls", area='bottom')
+        self.lt_layerlist = inspect.unwrap(self.qt_lifetime_viewer.dockLayerList)
+        self.qt_main_window.tabifyDockWidget(self.lt_layerlist, self.ph_layerlist)
         
         self.qt_lifetime_viewer.canvas.events.mouse_press.connect(self.switch_to_lifetime_controls)
         self.qt_phasor_viewer.canvas.events.mouse_press.connect(self.switch_to_phasor_controls)
@@ -197,13 +194,13 @@ class Controller():
 
     def switch_to_phasor_controls(self, event=None):
         self.show_layer_controls()
-        self.qt_phasor_viewer.dockLayerControls.raise_()
-        self.qt_phasor_viewer.dockLayerList.raise_()
+        self.ph_ctrls.raise_()
+        self.ph_layerlist.raise_()
 
     def switch_to_lifetime_controls(self, event=None):
         self.show_layer_controls()
-        self.qt_lifetime_viewer.dockLayerControls.raise_()
-        self.qt_lifetime_viewer.dockLayerList.raise_()
+        self.lt_ctrls.raise_()
+        self.lt_layerlist.raise_()
 
     def display_phasor_mouse_pos(self, event : Event):
         self.phasor_viewer.text_overlay.visible = True
@@ -391,7 +388,8 @@ class Controller():
         name = str(series_metadata.series_no) + "-" + str(series_metadata.port)
         sel = self.lifetime_viewer.layers.selection.copy()
         image = self.lifetime_viewer.add_image(EMPTY_RGB_IMAGE, rgb=True, name=name)
-        self.lifetime_viewer.layers.selection = sel
+        if sel in self.lifetime_viewer.layers:
+            self.lifetime_viewer.layers.selection = sel # retain old selection if possible
         # Move new lifetime image to the end of the current lifetime layers
         self.lifetime_viewer.layers.move(len(self.lifetime_viewer.layers) - 1, len(lifetime_layers))
         zoom_viewer(self.qt_lifetime_viewer, ((0,0), image_shape))
@@ -486,7 +484,8 @@ class Controller():
         select_layer = viewer.add_shapes(DEFUALT_LIFETIME_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0)
         sel = co_viewer.layers.selection.copy()
         co_selection = co_viewer.add_points(None, name="Correlation", size=1/PHASOR_SCALE, face_color=color, edge_width=0, scale=[-PHASOR_SCALE, PHASOR_SCALE])
-        co_viewer.layers.selection = sel
+        if sel in co_viewer.layers:
+            co_viewer.layers.selection = sel # retain old selection if possible
         co_selection.editable = False
         decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
         set_selection(select_layer, LifetimeSelectionMetadata(select_layer, co_selection, decay_plot, self))
@@ -504,7 +503,8 @@ class Controller():
         select_layer = viewer.add_shapes(DEFUALT_PHASOR_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0, scale=[-1, 1])
         sel = co_viewer.layers.selection.copy()
         co_selection = co_viewer.add_points(None, name="Correlation", size=1, face_color=color, edge_width=0)
-        co_viewer.layers.selection = sel
+        if sel in co_viewer.layers:
+            co_viewer.layers.selection = sel # retain old selection if possible
         co_selection.editable = False
         decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
         set_selection(select_layer, PhasorSelectionMetadata(select_layer, co_selection, decay_plot, self))

@@ -72,6 +72,6 @@ if __name__ == "__main__":
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
     viewer = napari.Viewer()
     flim_viewer = FlimViewer(viewer)
-    viewer.window.add_dock_widget(flim_viewer)
+    viewer.window.add_dock_widget(flim_viewer, name="FlimViewer: test")
     create_send_widget(viewer, flim_viewer)
     napari.run()
