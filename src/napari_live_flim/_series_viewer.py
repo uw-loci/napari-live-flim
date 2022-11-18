@@ -50,8 +50,8 @@ class ComputeTask:
             self.phasor_image = EXECUTOR.submit(compute_phasor_image, self.phasor)
             self.phasor_face_color = EXECUTOR.submit(compute_phasor_face_color, self.intensity)
             self.done = gather_futures(self.intensity, self.lifetime_image, self.phasor, self.phasor_quadtree, self.phasor_image, self.phasor_face_color)
-            self.done.add_done_callback(self._stop_benchmark)
             self.done.add_done_callback(self._series_viewer.compute_done_callback)
+            self.done.add_done_callback(self._stop_benchmark)
 
     def cancel(self):
         if self.all_started(): # if user is looking at a snapshot, latest may not have even been started
