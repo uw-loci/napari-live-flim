@@ -63,6 +63,7 @@ class Controller():
         phasor_shapes_layer.editable = False
         # empty phasor data
         self.phasor_image = self.phasor_viewer.add_points(None, name="Phasor", edge_width=0, size=3/PHASOR_SCALE, scale=[-PHASOR_SCALE, PHASOR_SCALE])
+        self.phasor_viewer.layers.selection = {} # no layers are selected
         zoom_viewer(self.qt_phasor_viewer, ((0,-PHASOR_SCALE/2), (PHASOR_SCALE, PHASOR_SCALE/2)))
         self.phasor_image.editable = False
 
@@ -388,8 +389,10 @@ class Controller():
         name = str(series_metadata.series_no) + "-" + str(series_metadata.port)
         sel = self.lifetime_viewer.layers.selection.copy()
         image = self.lifetime_viewer.add_image(EMPTY_RGB_IMAGE, rgb=True, name=name)
-        if sel in self.lifetime_viewer.layers:
+        try:
             self.lifetime_viewer.layers.selection = sel # retain old selection if possible
+        except KeyError:
+            logging.error(f"unable to set selection {sel} into layers {self.lifetime_viewer.layers}")
         # Move new lifetime image to the end of the current lifetime layers
         self.lifetime_viewer.layers.move(len(self.lifetime_viewer.layers) - 1, len(lifetime_layers))
         zoom_viewer(self.qt_lifetime_viewer, ((0,0), image_shape))
@@ -484,8 +487,10 @@ class Controller():
         select_layer = viewer.add_shapes(DEFUALT_LIFETIME_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0)
         sel = co_viewer.layers.selection.copy()
         co_selection = co_viewer.add_points(None, name="Correlation", size=1/PHASOR_SCALE, face_color=color, edge_width=0, scale=[-PHASOR_SCALE, PHASOR_SCALE])
-        if sel in co_viewer.layers:
+        try:
             co_viewer.layers.selection = sel # retain old selection if possible
+        except KeyError:
+            logging.error(f"unable to set selection {sel} into layers {co_viewer.layers}")
         co_selection.editable = False
         decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
         set_selection(select_layer, LifetimeSelectionMetadata(select_layer, co_selection, decay_plot, self))
@@ -503,8 +508,10 @@ class Controller():
         select_layer = viewer.add_shapes(DEFUALT_PHASOR_SELECTION, shape_type="ellipse", name="Selection", face_color=color+"7f", edge_width=0, scale=[-1, 1])
         sel = co_viewer.layers.selection.copy()
         co_selection = co_viewer.add_points(None, name="Correlation", size=1, face_color=color, edge_width=0)
-        if sel in co_viewer.layers:
+        try:
             co_viewer.layers.selection = sel # retain old selection if possible
+        except KeyError:
+            logging.error(f"unable to set selection {sel} into layers {co_viewer.layers}")
         co_selection.editable = False
         decay_plot = CurveFittingPlot(self.lifetime_viewer, scatter_color=color)
         set_selection(select_layer, PhasorSelectionMetadata(select_layer, co_selection, decay_plot, self))
