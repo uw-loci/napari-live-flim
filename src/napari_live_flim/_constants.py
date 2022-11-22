@@ -1,7 +1,6 @@
 import numpy as np
 from pathlib import Path
-from matplotlib.colors import ListedColormap, Normalize
-from matplotlib.cm import get_cmap
+import matplotlib
 from ._dataclasses import FlimParams, DisplaySettings
 from concurrent.futures import ThreadPoolExecutor
 
@@ -46,15 +45,15 @@ COLOR_DICT = {  "red":"#FF0000",
             }
 
 COLORMAPS = {
-    "intensity" : ListedColormap([1,1,1], "intensity"),
-    "turbo" : get_cmap("turbo")
+    "intensity" : matplotlib.colors.ListedColormap([1,1,1], "intensity"),
+    "turbo" : matplotlib.colormaps["turbo"]
 }
 
 for path in Path(__file__).resolve().parent.joinpath('colormaps').iterdir():
     arr = np.genfromtxt(path, delimiter=",", dtype=int)
-    norm = Normalize(0, 255)
+    norm = matplotlib.colors.Normalize(0, 255)
     name = path.stem
-    cm = ListedColormap(norm(arr), name)
+    cm = matplotlib.colors.ListedColormap(norm(arr), name)
     COLORMAPS[name] = cm
 
 DEFAULT_FLIM_PARAMS = FlimParams(DEFAULT_PERIOD, 0, 1)
